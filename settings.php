@@ -80,6 +80,11 @@ if ($hassiteconfig) {
         get_string('request_timeout_desc', 'local_coursetransfer'),
             20, PARAM_INT));
 
+    $settings->add(new admin_setting_configtext('local_coursetransfer/download_timeout',
+        get_string('download_timeout', 'local_coursetransfer'),
+        get_string('download_timeout_desc', 'local_coursetransfer'),
+            300, PARAM_INT));
+
     $settings->add(new admin_setting_configempty('local_coursetransfer/target_sites',
             new lang_string('setting_target_sites', 'local_coursetransfer'),
             html_writer::link(new moodle_url('/local/coursetransfer/targetsites.php'),

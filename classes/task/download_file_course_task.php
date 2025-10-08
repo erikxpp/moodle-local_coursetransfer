@@ -56,6 +56,61 @@ class download_file_course_task extends \core\task\adhoc_task {
     use \core\task\logging_trait;
 
     /**
+     * Download file using cURL instead of file_get_contents for better handling of large files.
+     *
+     * @param string $url The URL to download from
+     * @return string The file content
+     * @throws moodle_exception If download fails
+     */
+    private function download_file_with_curl(string $url): string {
+        $curl = curl_init();
+        
+        // Get timeout from plugin settings or use default (300 seconds = 5 minutes)
+        $timeout = (int)get_config('local_coursetransfer', 'download_timeout') ?: 300;
+        
+        curl_setopt_array($curl, [
+            CURLOPT_URL => $url,
+            CURLOPT_RETURNTRANSFER => true,
+            CURLOPT_FOLLOWLOCATION => true,
+            CURLOPT_TIMEOUT => $timeout,
+            CURLOPT_CONNECTTIMEOUT => 30,
+            CURLOPT_SSL_VERIFYPEER => false,
+            CURLOPT_SSL_VERIFYHOST => false,
+            CURLOPT_USERAGENT => 'Moodle CourseTransfer Plugin/1.0',
+            CURLOPT_MAXREDIRS => 5,
+            CURLOPT_HTTP_VERSION => CURL_HTTP_VERSION_1_1,
+            CURLOPT_ENCODING => '', // Accept all supported encodings
+        ]);
+        
+        $result = curl_exec($curl);
+        $httpCode = curl_getinfo($curl, CURLINFO_HTTP_CODE);
+        $contentLength = curl_getinfo($curl, CURLINFO_CONTENT_LENGTH_DOWNLOAD);
+        $error = curl_error($curl);
+        $errno = curl_errno($curl);
+        
+        curl_close($curl);
+        
+        // Log download details
+        $this->log("Download attempt - HTTP Code: {$httpCode}, Content Length: {$contentLength} bytes, cURL Error: {$errno}");
+        
+        if ($result === false || $errno !== 0) {
+            throw new \Exception("cURL error {$errno}: {$error}");
+        }
+        
+        if ($httpCode !== 200) {
+            throw new \Exception("HTTP error {$httpCode}");
+        }
+        
+        if (empty($result)) {
+            throw new \Exception('Downloaded file is empty');
+        }
+        
+        $this->log("Download successful - File size: " . strlen($result) . " bytes");
+        
+        return $result;
+    }
+
+    /**
      * Execute.
      *
      * @throws dml_exception
@@ -70,7 +125,7 @@ class download_file_course_task extends \core\task\adhoc_task {
 
         try {
             $fs = get_file_storage();
-            $filecontent = @file_get_contents($fileurle);
+            $filecontent = $this->download_file_with_curl($fileurle);
 
             if (!empty($filecontent)) {
                 $this->log('Backup File Dowload Success!');
