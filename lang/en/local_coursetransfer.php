@@ -331,3 +331,17 @@ $string['select_category_target'] = 'Select the category where the new course wi
 $string['select_destination'] = 'Select the destination';
 $string['search_course_destination'] = 'Search the destination course';
 $string['not_course_found'] = 'No course found...';
+
+// Download optimization settings
+$string['download_settings'] = 'Download Optimization Settings';
+$string['download_settings_desc'] = 'Configure timeout and connection settings for optimized file downloads';
+$string['download_timeout'] = 'Download timeout (seconds)';
+$string['download_timeout_desc'] = 'Maximum time allowed for large file downloads (default: 1800 seconds = 30 minutes)';
+$string['connect_timeout'] = 'Connection timeout (seconds)';
+$string['connect_timeout_desc'] = 'Maximum time to wait for connection establishment (default: 30 seconds)';
+$string['head_timeout'] = 'HEAD request timeout (seconds)';
+$string['head_timeout_desc'] = 'Timeout for checking remote file size (default: 30 seconds)';
+$string['small_file_timeout'] = 'Small file timeout (seconds)';
+$string['small_file_timeout_desc'] = 'Timeout for small file downloads using direct method (default: 300 seconds = 5 minutes)';
+$string['ssl_verify'] = 'SSL certificate verification';
+$string['ssl_verify_desc'] = 'Verify SSL certificates when downloading from HTTPS sources (recommended: enabled)';

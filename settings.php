@@ -100,6 +100,36 @@ if ($hassiteconfig) {
             get_string('remove_cat_cleanup_desc', 'local_coursetransfer'),
             false));
 
+    // Download optimization settings
+    $settings->add(new admin_setting_heading('local_coursetransfer/downloadheading',
+            get_string('download_settings', 'local_coursetransfer'),
+            get_string('download_settings_desc', 'local_coursetransfer')));
+
+    $settings->add(new admin_setting_configtext('local_coursetransfer/download_timeout',
+            get_string('download_timeout', 'local_coursetransfer'),
+            get_string('download_timeout_desc', 'local_coursetransfer'),
+            1800, PARAM_INT));
+
+    $settings->add(new admin_setting_configtext('local_coursetransfer/connect_timeout',
+            get_string('connect_timeout', 'local_coursetransfer'),
+            get_string('connect_timeout_desc', 'local_coursetransfer'),
+            30, PARAM_INT));
+
+    $settings->add(new admin_setting_configtext('local_coursetransfer/head_timeout',
+            get_string('head_timeout', 'local_coursetransfer'),
+            get_string('head_timeout_desc', 'local_coursetransfer'),
+            30, PARAM_INT));
+
+    $settings->add(new admin_setting_configtext('local_coursetransfer/small_file_timeout',
+            get_string('small_file_timeout', 'local_coursetransfer'),
+            get_string('small_file_timeout_desc', 'local_coursetransfer'),
+            300, PARAM_INT));
+
+    $settings->add(new admin_setting_configcheckbox('local_coursetransfer/ssl_verify',
+            get_string('ssl_verify', 'local_coursetransfer'),
+            get_string('ssl_verify_desc', 'local_coursetransfer'),
+            true));
+
     $choices = coursetransfer::FIELDS_USER;
     $options = [];
     foreach ($choices as $choice) {
