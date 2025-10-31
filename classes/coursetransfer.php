@@ -38,6 +38,7 @@ namespace local_coursetransfer;
 use coding_exception;
 use context;
 use context_course;
+use context_system;
 use core_collator;
 use core_course_category;
 use core_course_list_element;
@@ -1191,7 +1192,8 @@ class coursetransfer {
      * @throws coding_exception
      */
     protected static function filter_course(stdClass $course, stdClass $user, string $search): bool {
-        $context = \context_course::instance($course->id);
+        // Use system context instead of course-specific context to avoid granular permission issues
+        $context = \context_system::instance();
         if (!has_capability('moodle/backup:backupcourse', $context, $user->id)) {
             return false;
         }
