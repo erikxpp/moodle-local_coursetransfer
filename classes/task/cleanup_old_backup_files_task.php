@@ -121,21 +121,28 @@ class cleanup_old_backup_files_task extends \core\task\scheduled_task {
             try {
                 $context = \context_course::instance($request->origin_course_id);
                 
-                $file = $fs->get_file(
+                // Get all files in the backup area for this request
+                $files = $fs->get_area_files(
                     $context->id,
                     'local_coursetransfer',
                     'backup',
                     $request->id,
-                    '/',
-                    'backup.mbz'
+                    'timemodified DESC',
+                    false // Don't include directories
                 );
 
-                if ($file && $file->get_timemodified() < $cutoff_time) {
-                    $filesize = $file->get_filesize();
-                    $file->delete();
-                    $cleaned++;
-                    mtrace("  Deleted origin backup for request {$request->id} (" . 
-                           round($filesize / 1048576, 2) . " MB)");
+                foreach ($files as $file) {
+                    $filename = $file->get_filename();
+                    // Match pattern: backup_{timestamp}_{requestid}.mbz
+                    if (preg_match('/^backup_\d+_' . $request->id . '\.mbz$/', $filename)) {
+                        if ($file->get_timemodified() < $cutoff_time) {
+                            $filesize = $file->get_filesize();
+                            $file->delete();
+                            $cleaned++;
+                            mtrace("  Deleted origin backup '{$filename}' for request {$request->id} (" . 
+                                   round($filesize / 1048576, 2) . " MB)");
+                        }
+                    }
                 }
             } catch (\Exception $e) {
                 mtrace("  Error cleaning origin backup for request {$request->id}: " . $e->getMessage());

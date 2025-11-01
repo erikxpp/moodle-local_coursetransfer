@@ -124,6 +124,7 @@ class category_course_component implements renderable, templatable {
             $c->idnumber = $request->origin_course_idnumber;
             $c->categoryid = $request->origin_category_id;
             $c->categoryname = $request->origin_category_name;
+            $c->request_id = $request->id;
             $c->has_status = true;
             $status = (int)$request->status;
             if (!empty($status)) {
@@ -135,8 +136,8 @@ class category_course_component implements renderable, templatable {
             }
             $c->checked = true;
             $c->disabled = true;
-            $logurl = new moodle_url('/local/coursetransfer/origin_restore_course.php',
-                    ['id' => $request->target_course_id]);
+            $logurl = new moodle_url('/local/coursetransfer/logs_detail.php',
+                    ['requestid' => $request->id]);
             $urldes = new moodle_url('/course/view.php',
                     ['id' => $request->target_course_id]);
             $c->log_url = $logurl->out(false);

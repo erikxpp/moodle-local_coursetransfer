@@ -430,9 +430,23 @@ class coursetransfer_restore_course_merge_test extends advanced_testcase {
 
         $fs = get_file_storage();
 
-        $file = $fs->get_file(
-                $context->id, 'local_coursetransfer', 'backup',
-                $requestorigin->id, '/', 'backup.mbz');
+        // Get backup file with pattern backup_{timestamp}_{requestid}.mbz
+        $files = $fs->get_area_files(
+            $context->id,
+            'local_coursetransfer',
+            'backup',
+            $requestorigin->id,
+            'timemodified DESC',
+            false
+        );
+        
+        $file = null;
+        foreach ($files as $f) {
+            if (preg_match('/^backup_\d+_' . $requestorigin->id . '\.mbz$/', $f->get_filename())) {
+                $file = $f;
+                break;
+            }
+        }
 
         $this->assertNotEmpty($file);
 

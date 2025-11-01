@@ -239,19 +239,25 @@ class target_course_callback_external extends external_api {
                         $context = \context_course::instance($request->origin_course_id);
                         
                         // Delete the backup file from local_coursetransfer filearea
-                        $file = $fs->get_file(
+                        // Use pattern to find file: backup_{timestamp}_{requestid}.mbz
+                        $files = $fs->get_area_files(
                             $context->id,
                             'local_coursetransfer',
                             'backup',
                             $requestid,
-                            '/',
-                            'backup.mbz'
+                            'timemodified DESC',
+                            false // Don't include directories
                         );
                         
-                        if ($file) {
-                            $file->delete();
-                            $data->cleaned = true;
-                            mtrace("Cleaned origin backup file for request {$requestid}");
+                        foreach ($files as $file) {
+                            $filename = $file->get_filename();
+                            // Match pattern: backup_{timestamp}_{requestid}.mbz
+                            if (preg_match('/^backup_\d+_' . $requestid . '\.mbz$/', $filename)) {
+                                $file->delete();
+                                $data->cleaned = true;
+                                mtrace("Cleaned origin backup file '{$filename}' for request {$requestid}");
+                                break; // Only delete the first matching file
+                            }
                         }
                     }
                     

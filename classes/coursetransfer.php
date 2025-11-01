@@ -426,13 +426,16 @@ class coursetransfer {
             $fs = get_file_storage();
             $timestamp = time();
 
+            // Use unique filename with timestamp to avoid collisions when same course is backed up multiple times
+            $unique_filename = 'backup_' . $timestamp . '_' . $requestoriginid . '.mbz';
+
             $filerecord = [
                     'contextid' => $context->id,
                     'component' => 'local_coursetransfer',
                     'filearea' => 'backup',
                     'itemid' => $requestoriginid,
                     'filepath' => '/',
-                    'filename' => 'backup.mbz',
+                    'filename' => $unique_filename,
                     'timecreated' => $timestamp,
                     'timemodified' => $timestamp,
             ];
