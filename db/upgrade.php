@@ -117,5 +117,40 @@ function xmldb_local_coursetransfer_upgrade($oldversion): bool {
 
     }
 
+    if ($oldversion < 2024110200) {
+
+        // Define table local_coursetransfer_log to be created.
+        $table = new xmldb_table('local_coursetransfer_log');
+
+        // Adding fields to table local_coursetransfer_log.
+        $table->add_field('id', XMLDB_TYPE_INTEGER, '10', null, XMLDB_NOTNULL, XMLDB_SEQUENCE, null);
+        $table->add_field('request_id', XMLDB_TYPE_INTEGER, '10', null, XMLDB_NOTNULL, null, null);
+        $table->add_field('direction', XMLDB_TYPE_INTEGER, '1', null, XMLDB_NOTNULL, null, null);
+        $table->add_field('action', XMLDB_TYPE_CHAR, '50', null, XMLDB_NOTNULL, null, null);
+        $table->add_field('status', XMLDB_TYPE_CHAR, '20', null, XMLDB_NOTNULL, null, null);
+        $table->add_field('message', XMLDB_TYPE_TEXT, null, null, null, null, null);
+        $table->add_field('error_code', XMLDB_TYPE_CHAR, '20', null, null, null, null);
+        $table->add_field('task_id', XMLDB_TYPE_INTEGER, '10', null, null, null, null);
+        $table->add_field('task_classname', XMLDB_TYPE_CHAR, '255', null, null, null, null);
+        $table->add_field('extra_data', XMLDB_TYPE_TEXT, null, null, null, null, null);
+        $table->add_field('timecreated', XMLDB_TYPE_INTEGER, '10', null, XMLDB_NOTNULL, null, '0');
+
+        // Adding keys to table local_coursetransfer_log.
+        $table->add_key('primary', XMLDB_KEY_PRIMARY, ['id']);
+        $table->add_key('request_id', XMLDB_KEY_FOREIGN, ['request_id'], 'local_coursetransfer_request', ['id']);
+
+        // Adding indexes to table local_coursetransfer_log.
+        $table->add_index('action_idx', XMLDB_INDEX_NOTUNIQUE, ['action']);
+        $table->add_index('status_idx', XMLDB_INDEX_NOTUNIQUE, ['status']);
+
+        // Conditionally launch create table for local_coursetransfer_log.
+        if (!$dbman->table_exists($table)) {
+            $dbman->create_table($table);
+        }
+
+        // Coursetransfer savepoint reached.
+        upgrade_plugin_savepoint(true, 2024110200, 'local', 'coursetransfer');
+    }
+
     return true;
 }

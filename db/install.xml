@@ -72,5 +72,28 @@
                 <KEY NAME="primary" TYPE="primary" FIELDS="id"/>
             </KEYS>
         </TABLE>
+        <TABLE NAME="local_coursetransfer_log" COMMENT="Detailed log entries for each step of the transfer process">
+            <FIELDS>
+                <FIELD NAME="id" TYPE="int" LENGTH="10" NOTNULL="true" SEQUENCE="true"/>
+                <FIELD NAME="request_id" TYPE="int" LENGTH="10" NOTNULL="true" COMMENT="FK to local_coursetransfer_request"/>
+                <FIELD NAME="direction" TYPE="int" LENGTH="1" NOTNULL="true" COMMENT="0 = origin, 1 = target"/>
+                <FIELD NAME="action" TYPE="char" LENGTH="50" NOTNULL="true" COMMENT="backup_started, backup_completed, download_started, etc"/>
+                <FIELD NAME="status" TYPE="char" LENGTH="20" NOTNULL="true" COMMENT="success, error, info, warning"/>
+                <FIELD NAME="message" TYPE="text" NOTNULL="false" COMMENT="Detailed message"/>
+                <FIELD NAME="error_code" TYPE="char" LENGTH="20" NOTNULL="false" COMMENT="Error code if applicable"/>
+                <FIELD NAME="task_id" TYPE="int" LENGTH="10" NOTNULL="false" COMMENT="FK to mdl_task_adhoc if applicable"/>
+                <FIELD NAME="task_classname" TYPE="char" LENGTH="255" NOTNULL="false" COMMENT="Adhoc task classname"/>
+                <FIELD NAME="extra_data" TYPE="text" NOTNULL="false" COMMENT="JSON with additional data (file size, duration, etc)"/>
+                <FIELD NAME="timecreated" TYPE="int" LENGTH="10" NOTNULL="true" DEFAULT="0"/>
+            </FIELDS>
+            <KEYS>
+                <KEY NAME="primary" TYPE="primary" FIELDS="id"/>
+                <KEY NAME="request_id" TYPE="foreign" FIELDS="request_id" REFTABLE="local_coursetransfer_request" REFFIELDS="id"/>
+            </KEYS>
+            <INDEXES>
+                <INDEX NAME="action_idx" UNIQUE="false" FIELDS="action"/>
+                <INDEX NAME="status_idx" UNIQUE="false" FIELDS="status"/>
+            </INDEXES>
+        </TABLE>
     </TABLES>
 </XMLDB>

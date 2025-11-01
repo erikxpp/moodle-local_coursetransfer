@@ -345,3 +345,61 @@ $string['backup_retention_hours'] = 'Horas de retención de respaldos';
 $string['backup_retention_hours_desc'] = 'Número de horas que se mantendrán los archivos de respaldo antes de ser elegibles para limpieza automática (solo para respaldos en estado fallido o incompleto).';
 $string['cleanup_old_backup_files'] = 'Limpiar archivos de respaldo antiguos';
 
+// Detailed logging system strings
+$string['request_logs_detail'] = 'Detalle de Logs de Transferencia';
+$string['request_details'] = 'Detalles de la Solicitud';
+$string['request_id'] = 'ID de Solicitud';
+$string['direction'] = 'Dirección';
+$string['request'] = 'Solicitud';
+$string['response'] = 'Respuesta';
+$string['status'] = 'Estado';
+$string['course'] = 'Curso';
+$string['origin_course_id'] = 'ID Curso Origen';
+$string['target_course_id'] = 'ID Curso Destino';
+$string['site_url'] = 'URL del Sitio';
+$string['created'] = 'Creado';
+$string['modified'] = 'Modificado';
+$string['error'] = 'Error';
+$string['warning'] = 'Advertencia';
+$string['adhoc_tasks'] = 'Tareas Ad-hoc';
+$string['task_id'] = 'ID de Tarea';
+$string['task_name'] = 'Nombre de Tarea';
+$string['classname'] = 'Clase';
+$string['started'] = 'Iniciado';
+$string['next_run'] = 'Próxima Ejecución';
+$string['fail_delay'] = 'Retraso por Fallo';
+$string['actions'] = 'Acciones';
+$string['view_logs'] = 'Ver Logs';
+$string['view_task_log'] = 'Ver Log de Tarea';
+$string['view_task'] = 'Ver Tarea';
+$string['logs_timeline'] = 'Línea de Tiempo de Logs';
+$string['origin_logs'] = 'Logs del Origen';
+$string['target_logs'] = 'Logs del Destino';
+$string['no_logs_found'] = 'No se encontraron logs para esta transferencia';
+$string['request_stuck'] = 'Esta transferencia parece estar atascada. No hay tareas activas pero el estado no se ha completado.';
+$string['back_to_logs'] = 'Volver a Logs';
+$string['additional_info'] = 'Información Adicional';
+$string['error_code'] = 'Código de Error';
+$string['requestnotfound'] = 'Solicitud de transferencia no encontrada';
+
+// Log action strings
+$string['log_action_request_created'] = 'Solicitud Creada';
+$string['log_action_backup_started'] = 'Backup Iniciado';
+$string['log_action_backup_completed'] = 'Backup Completado';
+$string['log_action_backup_failed'] = 'Backup Fallido';
+$string['log_action_download_started'] = 'Descarga Iniciada';
+$string['log_action_download_progress'] = 'Descarga en Progreso';
+$string['log_action_download_completed'] = 'Descarga Completada';
+$string['log_action_download_failed'] = 'Descarga Fallida';
+$string['log_action_restore_started'] = 'Restauración Iniciada';
+$string['log_action_restore_completed'] = 'Restauración Completada';
+$string['log_action_restore_failed'] = 'Restauración Fallida';
+$string['log_action_cleanup_started'] = 'Limpieza Iniciada';
+$string['log_action_cleanup_completed'] = 'Limpieza Completada';
+$string['log_action_cleanup_failed'] = 'Limpieza Fallida';
+$string['log_action_task_created'] = 'Tarea Creada';
+$string['log_action_task_started'] = 'Tarea Iniciada';
+$string['log_action_task_completed'] = 'Tarea Completada';
+$string['log_action_task_failed'] = 'Tarea Fallida';
+
+

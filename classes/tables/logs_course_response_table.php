@@ -86,6 +86,7 @@ class logs_course_response_table extends table_sql {
                 'timemodified',
                 'timecreated',
                 'detail',
+                'view_logs',
         ]);
 
         $this->define_headers([
@@ -101,6 +102,7 @@ class logs_course_response_table extends table_sql {
                 get_string('timemodified', 'local_coursetransfer'),
                 get_string('timecreated', 'local_coursetransfer'),
                 get_string('detail', 'local_coursetransfer'),
+                get_string('view_logs', 'local_coursetransfer'),
         ]);
 
         $this->sortable(false);
@@ -288,5 +290,19 @@ class logs_course_response_table extends table_sql {
         $href = new moodle_url('/local/coursetransfer/log.php', ['id' => $row->id]);
         return '<a href="' . $href->out(false) . '" target="_blank">' .
                 get_string('detail', 'local_coursetransfer') . '</a>';
+    }
+
+    /**
+     * Col View Logs
+     *
+     * @param stdClass $row Full data of the current row.
+     * @return string
+     * @throws moodle_exception
+     */
+    public function col_view_logs(stdClass $row): string {
+        $href = new moodle_url('/local/coursetransfer/logs_detail.php', ['requestid' => $row->id]);
+        return '<a href="' . $href->out(false) . '" target="_blank" title="' .
+                get_string('view_logs', 'local_coursetransfer') . '">' .
+                '<i class="fa fa-search"></i> ' . get_string('view_logs', 'local_coursetransfer') . '</a>';
     }
 }

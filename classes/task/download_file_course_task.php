@@ -37,6 +37,7 @@ namespace local_coursetransfer\task;
 use context_course;
 use dml_exception;
 use local_coursetransfer\coursetransfer;
+use local_coursetransfer\coursetransfer_logger;
 use local_coursetransfer\coursetransfer_request;
 use local_coursetransfer\coursetransfer_restore;
 use moodle_exception;
@@ -68,6 +69,23 @@ class download_file_course_task extends \core\task\adhoc_task {
         $fileurl = $this->get_custom_data()->fileurl;
         $requestid = $this->get_custom_data()->requestid;
         $request = coursetransfer_request::get($requestid);
+        
+        // Log download started
+        coursetransfer_logger::log_task_started(
+            $requestid,
+            coursetransfer_logger::DIRECTION_TARGET,
+            $this->get_id(),
+            get_class($this),
+            'Starting backup file download from origin'
+        );
+        
+        coursetransfer_logger::info(
+            $requestid,
+            coursetransfer_logger::DIRECTION_TARGET,
+            coursetransfer_logger::ACTION_DOWNLOAD_STARTED,
+            'Initiating download from: ' . $fileurl,
+            ['file_url' => $fileurl, 'adhoc_task_id' => $this->get_id()]
+        );
         
         // Critical validation: Check if request exists and has valid target_course_id
         if (!$request) {
@@ -140,6 +158,20 @@ class download_file_course_task extends \core\task\adhoc_task {
             unlink($tempfile);
             
             $this->log('Backup File Import to Moodle Success!');
+            
+            // Log successful download completion
+            coursetransfer_logger::success(
+                $requestid,
+                coursetransfer_logger::DIRECTION_TARGET,
+                coursetransfer_logger::ACTION_DOWNLOAD_COMPLETED,
+                'Backup file downloaded and imported successfully',
+                [
+                    'file_size' => $filesize,
+                    'filename' => $filename,
+                    'context_id' => $context->id
+                ]
+            );
+            
             $request->status = coursetransfer_request::STATUS_DOWNLOADED;
             coursetransfer_request::insert_or_update($request, $request->id);
             
@@ -152,6 +184,17 @@ class download_file_course_task extends \core\task\adhoc_task {
             
         } catch (\Exception $e) {
             $this->log('Error: ' . $e->getMessage());
+            
+            // Log download failure
+            coursetransfer_logger::error(
+                $requestid,
+                coursetransfer_logger::DIRECTION_TARGET,
+                coursetransfer_logger::ACTION_DOWNLOAD_FAILED,
+                'Download failed: ' . $e->getMessage(),
+                '13000',
+                ['exception' => get_class($e), 'trace' => $e->getTraceAsString()]
+            );
+            
             $request->status = coursetransfer_request::STATUS_ERROR;
             $request->error_code = '13000';
             $request->error_message = $e->getMessage();

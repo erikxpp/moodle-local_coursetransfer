@@ -343,6 +343,61 @@ $string['backup_retention_hours'] = 'Backup retention hours';
 $string['backup_retention_hours_desc'] = 'Number of hours backup files will be retained before being eligible for automatic cleanup (only for failed or incomplete backups).';
 $string['cleanup_old_backup_files'] = 'Cleanup old backup files';
 
+// Logging system strings
+$string['request_logs_detail'] = 'Request Logs Detail';
+$string['request_details'] = 'Request Details';
+$string['request_id'] = 'Request ID';
+$string['direction'] = 'Direction';
+$string['request'] = 'Request';
+$string['response'] = 'Response';
+$string['status'] = 'Status';
+$string['course'] = 'Course';
+$string['origin_course_id'] = 'Origin Course ID';
+$string['target_course_id'] = 'Target Course ID';
+$string['site_url'] = 'Site URL';
+$string['created'] = 'Created';
+$string['modified'] = 'Modified';
+$string['error'] = 'Error';
+$string['warning'] = 'Warning';
+$string['adhoc_tasks'] = 'Adhoc Tasks';
+$string['task_id'] = 'Task ID';
+$string['task_name'] = 'Task Name';
+$string['classname'] = 'Class Name';
+$string['started'] = 'Started';
+$string['next_run'] = 'Next Run';
+$string['fail_delay'] = 'Fail Delay';
+$string['actions'] = 'Actions';
+$string['view_logs'] = 'View Logs';
+$string['view_task_log'] = 'View Task Log';
+$string['view_task'] = 'View Task';
+$string['logs_timeline'] = 'Logs Timeline';
+$string['origin_logs'] = 'Origin Logs';
+$string['target_logs'] = 'Target Logs';
+$string['no_logs_found'] = 'No logs found for this request.';
+$string['request_stuck'] = 'This request appears to be stuck. It has a status "In Progress" but no active adhoc tasks. Manual intervention may be required.';
+$string['back_to_logs'] = 'Back to Logs';
+$string['additional_info'] = 'Additional Information';
+$string['error_code'] = 'Error Code';
+$string['requestnotfound'] = 'Request not found';
+
+// Log action strings
+$string['log_action_backup_started'] = 'Backup Started';
+$string['log_action_backup_completed'] = 'Backup Completed';
+$string['log_action_backup_failed'] = 'Backup Failed';
+$string['log_action_download_started'] = 'Download Started';
+$string['log_action_download_progress'] = 'Download Progress';
+$string['log_action_download_completed'] = 'Download Completed';
+$string['log_action_download_failed'] = 'Download Failed';
+$string['log_action_restore_started'] = 'Restore Started';
+$string['log_action_restore_completed'] = 'Restore Completed';
+$string['log_action_restore_failed'] = 'Restore Failed';
+$string['log_action_cleanup_started'] = 'Cleanup Started';
+$string['log_action_cleanup_completed'] = 'Cleanup Completed';
+$string['log_action_cleanup_failed'] = 'Cleanup Failed';
+$string['log_action_task_created'] = 'Task Created';
+$string['log_action_task_started'] = 'Task Started';
+$string['log_action_task_completed'] = 'Task Completed';
+$string['log_action_task_failed'] = 'Task Failed';
 
 // Download optimization settings
 $string['download_settings'] = 'Download Optimization Settings';

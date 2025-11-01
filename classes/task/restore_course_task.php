@@ -37,6 +37,7 @@ namespace local_coursetransfer\task;
 use context_system;
 use dml_exception;
 use local_coursetransfer\coursetransfer;
+use local_coursetransfer\coursetransfer_logger;
 use local_coursetransfer\coursetransfer_notification;
 use local_coursetransfer\coursetransfer_request;
 use local_coursetransfer\coursetransfer_restore;
@@ -73,8 +74,36 @@ class restore_course_task extends \core\task\adhoc_task {
         $request = coursetransfer_request::get($requestid);
         $file = $fs->get_file_by_id($fileid);
 
+        // Log restore started
+        coursetransfer_logger::log_task_started(
+            $requestid,
+            coursetransfer_logger::DIRECTION_TARGET,
+            $this->get_id(),
+            get_class($this),
+            'Starting course restore process'
+        );
+        
+        coursetransfer_logger::info(
+            $requestid,
+            coursetransfer_logger::DIRECTION_TARGET,
+            coursetransfer_logger::ACTION_RESTORE_STARTED,
+            'Initiating restore for file ID: ' . $fileid,
+            ['file_id' => $fileid, 'adhoc_task_id' => $this->get_id()]
+        );
+
         if (!$file) {
             $this->log('Restore in Moodle not working beacuse File not found! :' . $fileid);
+            
+            // Log restore failure
+            coursetransfer_logger::error(
+                $requestid,
+                coursetransfer_logger::DIRECTION_TARGET,
+                coursetransfer_logger::ACTION_RESTORE_FAILED,
+                'Backup file not found in Moodle file system',
+                '11100',
+                ['file_id' => $fileid]
+            );
+            
             $request->status = coursetransfer_request::STATUS_ERROR;
             $request->error_code = '11100';
             $request->error_message = 'Restore in Moodle not working beacuse File not found! :' . $fileid;
@@ -83,6 +112,20 @@ class restore_course_task extends \core\task\adhoc_task {
             $success = coursetransfer_restore::restore_course($request, $file);
             if ($success) {
                 $this->log('Restore in Moodle Success!');
+                
+                // Log successful restore completion
+                coursetransfer_logger::success(
+                    $requestid,
+                    coursetransfer_logger::DIRECTION_TARGET,
+                    coursetransfer_logger::ACTION_RESTORE_COMPLETED,
+                    'Course restored successfully',
+                    [
+                        'target_course_id' => $request->target_course_id,
+                        'file_id' => $fileid,
+                        'file_size' => $file->get_filesize()
+                    ]
+                );
+                
                 $request->status = coursetransfer_request::STATUS_COMPLETED;
                 coursetransfer_request::insert_or_update($request, $request->id);
 

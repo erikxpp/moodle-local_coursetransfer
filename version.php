@@ -33,8 +33,8 @@
  */
 defined('MOODLE_INTERNAL') || die;
 
-$plugin->version   = 2024110100; // 2025-11-01 - Automatic backup cleanup
+$plugin->version   = 2024110200; // 2025-11-02 - Detailed logging system
 $plugin->requires  = 2021051703;
 $plugin->component = 'local_coursetransfer';
-$plugin->release   = '1.2.0';
+$plugin->release   = '1.3.0';
 $plugin->maturity  = MATURITY_ALPHA;
