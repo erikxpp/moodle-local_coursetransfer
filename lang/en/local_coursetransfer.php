@@ -399,6 +399,12 @@ $string['log_action_task_started'] = 'Task Started';
 $string['log_action_task_completed'] = 'Task Completed';
 $string['log_action_task_failed'] = 'Task Failed';
 
+// Log retention settings
+$string['log_retention_settings'] = 'Log Retention Settings';
+$string['log_retention_settings_desc'] = 'Configure how long log records should be kept before being automatically deleted';
+$string['log_retention_days'] = 'Log retention days';
+$string['log_retention_days_desc'] = 'Number of days that log records will be kept before being automatically deleted. Older logs will be removed by the scheduled task. Default: 90 days.';
+
 // Download optimization settings
 $string['download_settings'] = 'Download Optimization Settings';
 $string['download_settings_desc'] = 'Configure timeout and connection settings for optimized file downloads';

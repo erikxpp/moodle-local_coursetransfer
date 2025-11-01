@@ -81,6 +81,10 @@ class cleanup_old_backup_files_task extends \core\task\scheduled_task {
         }
 
         mtrace("Cleanup completed: {$cleaned_origin} origin backups, {$cleaned_target} target backups removed");
+
+        // Cleanup old logs
+        $cleaned_logs = $this->cleanup_old_logs();
+        mtrace("Log cleanup completed: {$cleaned_logs} log entries removed");
     }
 
     /**
@@ -207,5 +211,47 @@ class cleanup_old_backup_files_task extends \core\task\scheduled_task {
         }
 
         return $cleaned;
+    }
+
+    /**
+     * Cleanup old log entries
+     *
+     * @return int Number of log entries cleaned
+     */
+    private function cleanup_old_logs() {
+        global $DB;
+        
+        $retention_days = get_config('local_coursetransfer', 'log_retention_days') ?: 90;
+        $cutoff_time = time() - ($retention_days * 86400); // 86400 seconds = 1 day
+
+        mtrace("Starting cleanup of old log entries (retention: {$retention_days} days)");
+
+        try {
+            // Count logs to be deleted
+            $count = $DB->count_records_select(
+                'local_coursetransfer_log',
+                'timecreated < :cutoff',
+                ['cutoff' => $cutoff_time]
+            );
+
+            if ($count > 0) {
+                // Delete old log entries
+                $DB->delete_records_select(
+                    'local_coursetransfer_log',
+                    'timecreated < :cutoff',
+                    ['cutoff' => $cutoff_time]
+                );
+
+                mtrace("  Deleted {$count} log entries older than " . 
+                       userdate($cutoff_time, get_string('strftimedatetime', 'core_langconfig')));
+            } else {
+                mtrace("  No log entries to delete");
+            }
+
+            return $count;
+        } catch (\Exception $e) {
+            mtrace("  Error cleaning log entries: " . $e->getMessage());
+            return 0;
+        }
     }
 }

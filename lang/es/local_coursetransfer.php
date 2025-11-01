@@ -402,4 +402,9 @@ $string['log_action_task_started'] = 'Tarea Iniciada';
 $string['log_action_task_completed'] = 'Tarea Completada';
 $string['log_action_task_failed'] = 'Tarea Fallida';
 
+// Log retention settings
+$string['log_retention_settings'] = 'Configuración de Retención de Logs';
+$string['log_retention_settings_desc'] = 'Configure cuánto tiempo se deben mantener los registros de logs antes de ser eliminados automáticamente';
+$string['log_retention_days'] = 'Días de retención de logs';
+$string['log_retention_days_desc'] = 'Número de días que se mantendrán los registros de logs antes de ser eliminados automáticamente. Los logs más antiguos serán eliminados por la tarea programada. Valor predeterminado: 90 días.';
 

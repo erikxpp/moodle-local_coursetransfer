@@ -307,13 +307,48 @@ $string['log_action_task_completed'] = 'Tarea Completada';
 $string['log_action_task_failed'] = 'Tarea Fallida';
 ```
 
+## 🧹 Retención y Limpieza de Logs
+
+### Configuración de Retención
+
+El sistema incluye limpieza automática de logs antiguos para evitar que la tabla crezca indefinidamente.
+
+**Configuración disponible:**
+- **Días de retención**: Configurable en `Administración del sitio → Plugins → Local → CourseTransfer`
+- **Valor por defecto**: 90 días
+- **Configuración**: `log_retention_days`
+
+### Tarea de Limpieza
+
+La tarea programada `cleanup_old_backup_files_task` se encarga de:
+1. Limpiar archivos de backup antiguos (origin y target)
+2. Limpiar registros de logs más antiguos que el período de retención
+
+**Programación:**
+- Ejecuta diariamente a las 2:30 AM (configurable en `/admin/tool/task/scheduledtasks.php`)
+- Elimina automáticamente logs con `timecreated < (ahora - log_retention_days)`
+
+**Logs de la tarea:**
+```
+Starting cleanup of old log entries (retention: 90 days)
+  Deleted 150 log entries older than 01/08/2025 12:00
+Log cleanup completed: 150 log entries removed
+```
+
+### Beneficios
+
+- ✅ Mantiene la tabla de logs en un tamaño manejable
+- ✅ Mejora el rendimiento de consultas
+- ✅ Cumple con políticas de retención de datos
+- ✅ Completamente automático y configurable
+
 ## 📈 Próximos Pasos (No Implementados)
 
 1. ✅ Añadir columna "Ver Logs" en `logs_table.php` con enlace a `logs_detail.php`
-2. ✅ Implementar botón para "reintentar" tareas atascadas
-3. ✅ Exportar logs a CSV/PDF
-4. ✅ Notificaciones por email cuando una tarea falla
-5. ✅ Dashboard con estadísticas de transferencias
+2. ⬜ Implementar botón para "reintentar" tareas atascadas
+3. ⬜ Exportar logs a CSV/PDF
+4. ⬜ Notificaciones por email cuando una tarea falla
+5. ⬜ Dashboard con estadísticas de transferencias
 
 ## 🐛 Testing
 
@@ -338,6 +373,10 @@ $string['log_action_task_failed'] = 'Tarea Fallida';
 5. **Tareas Atascadas**
    - Crear request en progreso sin tareas activas
    - Verificar que se muestre advertencia
+
+6. **Limpieza de Logs**
+   - Verificar que la tarea programada se ejecute correctamente
+   - Confirmar que se eliminan logs antiguos según la configuración
 
 ## 📞 Soporte
 

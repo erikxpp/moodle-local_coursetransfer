@@ -120,6 +120,16 @@ if ($hassiteconfig) {
             get_string('backup_retention_hours_desc', 'local_coursetransfer'),
             24, PARAM_INT));
 
+    // Log retention settings
+    $settings->add(new admin_setting_heading('local_coursetransfer/logretentionheading',
+            get_string('log_retention_settings', 'local_coursetransfer'),
+            get_string('log_retention_settings_desc', 'local_coursetransfer')));
+
+    $settings->add(new admin_setting_configtext('local_coursetransfer/log_retention_days',
+            get_string('log_retention_days', 'local_coursetransfer'),
+            get_string('log_retention_days_desc', 'local_coursetransfer'),
+            90, PARAM_INT));
+
     // Download optimization settings
     $settings->add(new admin_setting_heading('local_coursetransfer/downloadheading',
             get_string('download_settings', 'local_coursetransfer'),
