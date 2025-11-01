@@ -184,6 +184,131 @@ class target_course_callback_external extends external_api {
     }
 
     /**
+     * Target Backup Downloaded Parameters.
+     *
+     * @return external_function_parameters
+     */
+    public static function target_backup_downloaded_parameters(): external_function_parameters {
+        return new external_function_parameters(
+            [
+                'field' => new external_value(PARAM_TEXT, 'Field'),
+                'value' => new external_value(PARAM_TEXT, 'Value'),
+                'requestid' => new external_value(PARAM_INT, 'Request ID'),
+            ]
+        );
+    }
+
+    /**
+     * Target Backup Downloaded - Cleanup origin backup.
+     *
+     * @param string $field
+     * @param string $value
+     * @param int $requestid
+     *
+     * @return array
+     * @throws invalid_parameter_exception
+     * @throws moodle_exception
+     */
+    public static function target_backup_downloaded(string $field, string $value, int $requestid): array {
+
+        $params = self::validate_parameters(
+            self::target_backup_downloaded_parameters(), [
+                'field' => $field,
+                'value' => $value,
+                'requestid' => $requestid,
+            ]
+        );
+
+        $field = $params['field'];
+        $value = $params['value'];
+        $requestid = $params['requestid'];
+
+        $errors = [];
+        $data = new stdClass();
+        $data->id = 0;
+        $data->cleaned = false;
+
+        try {
+            $authres = coursetransfer::auth_user($field, $value);
+            if ($authres['success']) {
+                $request = coursetransfer_request::get($requestid);
+                if ($request) {
+                    // Cleanup the origin backup file if auto cleanup is enabled
+                    if (get_config('local_coursetransfer', 'auto_cleanup_origin_backup')) {
+                        $fs = get_file_storage();
+                        $context = \context_course::instance($request->origin_course_id);
+                        
+                        // Delete the backup file from local_coursetransfer filearea
+                        $file = $fs->get_file(
+                            $context->id,
+                            'local_coursetransfer',
+                            'backup',
+                            $requestid,
+                            '/',
+                            'backup.mbz'
+                        );
+                        
+                        if ($file) {
+                            $file->delete();
+                            $data->cleaned = true;
+                            mtrace("Cleaned origin backup file for request {$requestid}");
+                        }
+                    }
+                    
+                    $data->id = $request->id;
+                    $success = true;
+                } else {
+                    $success = false;
+                    $errors[] = [
+                        'code' => '10302',
+                        'msg' => 'Request id not found: ' . $requestid,
+                    ];
+                }
+            } else {
+                $success = false;
+                $errors[] = $authres['error'];
+            }
+        } catch (moodle_exception $e) {
+            $success = false;
+            $errors[] = [
+                'code' => '10303',
+                'msg' => $e->getMessage(),
+            ];
+        }
+
+        return [
+            'success' => $success,
+            'data' => $data,
+            'errors' => $errors,
+        ];
+    }
+
+    /**
+     * Target Backup Downloaded Returns.
+     *
+     * @return external_single_structure
+     */
+    public static function target_backup_downloaded_returns(): external_single_structure {
+        return new external_single_structure(
+            [
+                'success' => new external_value(PARAM_BOOL, 'Was it a success?'),
+                'data' => new external_single_structure(
+                        [
+                                'id' => new external_value(PARAM_INT, 'Request ID', VALUE_OPTIONAL),
+                                'cleaned' => new external_value(PARAM_BOOL, 'Was backup cleaned?', VALUE_OPTIONAL),
+                        ]
+                ),
+                'errors' => new external_multiple_structure(new external_single_structure(
+                    [
+                        'code' => new external_value(PARAM_TEXT, 'Code'),
+                        'msg' => new external_value(PARAM_TEXT, 'Message'),
+                    ], PARAM_TEXT, 'Errors'
+                )),
+            ]
+        );
+    }
+
+    /**
      * Target Remove Course Completed parameters.
      *
      * @return external_function_parameters

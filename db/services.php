@@ -121,6 +121,15 @@ $functions = [
         'loginrequired' => true,
     ],
 
+    'local_coursetransfer_target_backup_downloaded' => [
+        'classname' => target_course_callback_external::class,
+        'methodname' => 'target_backup_downloaded',
+        'description' => 'Notify origin that the backup was downloaded successfully and can be cleaned up',
+        'type' => 'write',
+        'ajax' => true,
+        'loginrequired' => true,
+    ],
+
     'local_coursetransfer_target_backup_course_error' => [
         'classname' => target_course_callback_external::class,
         'methodname' => 'target_backup_course_error',
@@ -331,6 +340,7 @@ $services = [
             'local_coursetransfer_origin_get_category_detail',
             'local_coursetransfer_origin_backup_course',
             'local_coursetransfer_target_backup_course_completed',
+            'local_coursetransfer_target_backup_downloaded',
             'local_coursetransfer_target_backup_course_error',
             'local_coursetransfer_target_remove_course_completed',
             'local_coursetransfer_target_remove_course_error',

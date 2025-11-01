@@ -332,6 +332,18 @@ $string['select_destination'] = 'Select the destination';
 $string['search_course_destination'] = 'Search the destination course';
 $string['not_course_found'] = 'No course found...';
 
+// Backup cleanup settings
+$string['backup_cleanup_settings'] = 'Backup File Cleanup Settings';
+$string['backup_cleanup_settings_desc'] = 'Configuration for automatic cleanup of MBZ backup files after course transfers';
+$string['auto_cleanup_origin_backup'] = 'Auto-cleanup origin backup';
+$string['auto_cleanup_origin_backup_desc'] = 'If enabled, the MBZ file from the origin course will be automatically deleted after the destination successfully downloads it. This saves disk space on the origin server.';
+$string['auto_cleanup_target_backup'] = 'Auto-cleanup target backup';
+$string['auto_cleanup_target_backup_desc'] = 'If enabled, the downloaded MBZ file on the destination will be automatically deleted after the course restoration completes successfully. This saves disk space on the destination server.';
+$string['backup_retention_hours'] = 'Backup retention hours';
+$string['backup_retention_hours_desc'] = 'Number of hours backup files will be retained before being eligible for automatic cleanup (only for failed or incomplete backups).';
+$string['cleanup_old_backup_files'] = 'Cleanup old backup files';
+
+
 // Download optimization settings
 $string['download_settings'] = 'Download Optimization Settings';
 $string['download_settings_desc'] = 'Configure timeout and connection settings for optimized file downloads';

@@ -333,3 +333,15 @@ $string['select_category_target'] = 'Seleccione la categoría donde se restaurar
 $string['select_destination'] = 'Seleccione el destino';
 $string['search_course_destination'] = 'Busca el curso de destino';
 $string['not_course_found'] = 'No se ha encontrado ningún curso...';
+
+// Backup cleanup settings
+$string['backup_cleanup_settings'] = 'Configuración de limpieza de archivos de respaldo';
+$string['backup_cleanup_settings_desc'] = 'Configuración para la limpieza automática de archivos MBZ de respaldo después de transferir cursos';
+$string['auto_cleanup_origin_backup'] = 'Limpiar respaldo en origen automáticamente';
+$string['auto_cleanup_origin_backup_desc'] = 'Si está activo, el archivo MBZ del curso de origen se eliminará automáticamente después de que el destino lo descargue con éxito. Esto ahorra espacio en disco en el servidor origen.';
+$string['auto_cleanup_target_backup'] = 'Limpiar respaldo en destino automáticamente';
+$string['auto_cleanup_target_backup_desc'] = 'Si está activo, el archivo MBZ descargado en el destino se eliminará automáticamente después de que la restauración del curso se complete con éxito. Esto ahorra espacio en disco en el servidor destino.';
+$string['backup_retention_hours'] = 'Horas de retención de respaldos';
+$string['backup_retention_hours_desc'] = 'Número de horas que se mantendrán los archivos de respaldo antes de ser elegibles para limpieza automática (solo para respaldos en estado fallido o incompleto).';
+$string['cleanup_old_backup_files'] = 'Limpiar archivos de respaldo antiguos';
+

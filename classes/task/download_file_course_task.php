@@ -142,6 +142,12 @@ class download_file_course_task extends \core\task\adhoc_task {
             $this->log('Backup File Import to Moodle Success!');
             $request->status = coursetransfer_request::STATUS_DOWNLOADED;
             coursetransfer_request::insert_or_update($request, $request->id);
+            
+            // Notify origin that backup was downloaded successfully so it can cleanup
+            if (get_config('local_coursetransfer', 'auto_cleanup_origin_backup')) {
+                $this->notify_origin_backup_downloaded($request);
+            }
+            
             coursetransfer_restore::create_task_restore_course($request, $file);
             
         } catch (\Exception $e) {
@@ -450,6 +456,34 @@ class download_file_course_task extends \core\task\adhoc_task {
         $power = max($power, 0); // Ensure power is not negative
         
         return round($bytes / pow(1024, $power), 2) . ' ' . $units[$power];
+    }
+
+    /**
+     * Notify origin Moodle that backup was downloaded successfully
+     * so it can cleanup the backup file
+     *
+     * @param stdClass $request
+     * @return void
+     */
+    private function notify_origin_backup_downloaded($request) {
+        try {
+            $site = coursetransfer::get_site_by_url($request->siteurl);
+            if ($site) {
+                $api_request = new \local_coursetransfer\api\request($site);
+                $user = \core_user::get_user($request->userid);
+                
+                $response = $api_request->target_backup_course_downloaded($request->id, $user);
+                
+                if ($response->success) {
+                    $this->log('Successfully notified origin to cleanup backup file');
+                } else {
+                    $this->log('Failed to notify origin for cleanup: ' . json_encode($response->errors));
+                }
+            }
+        } catch (\Exception $e) {
+            // Don't fail the download process if notification fails
+            $this->log('Error notifying origin for cleanup: ' . $e->getMessage());
+        }
     }
 
 }

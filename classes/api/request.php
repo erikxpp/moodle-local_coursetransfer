@@ -250,6 +250,20 @@ class request {
     }
 
     /**
+     * Target Backup Downloaded - Notify origin to cleanup.
+     *
+     * @param int $requestid
+     * @param stdClass|null $user
+     * @return response
+     * @throws dml_exception
+     */
+    public function target_backup_course_downloaded(int $requestid, stdClass $user = null): response {
+        $params = $this->get_request_params($user);
+        $params['requestid'] = $requestid;
+        return $this->req('local_coursetransfer_target_backup_downloaded', $params);
+    }
+
+    /**
      * Target Remove Course Completed.
      *
      * @param int $requestid

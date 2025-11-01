@@ -86,6 +86,11 @@ class restore_course_task extends \core\task\adhoc_task {
                 $request->status = coursetransfer_request::STATUS_COMPLETED;
                 coursetransfer_request::insert_or_update($request, $request->id);
 
+                // Cleanup downloaded backup file if auto cleanup is enabled
+                if (get_config('local_coursetransfer', 'auto_cleanup_target_backup')) {
+                    $this->cleanup_downloaded_backup($file);
+                }
+
                 $site = coursetransfer::get_site_by_url($request->siteurl);
 
                 // Category Request logical.
@@ -136,6 +141,25 @@ class restore_course_task extends \core\task\adhoc_task {
                 $this->log('Restore in Moodle is Failed!');
             }
             $this->log_finish("Restore Backup Course Remote Finishing...");
+        }
+    }
+
+    /**
+     * Cleanup downloaded backup file after successful restoration
+     *
+     * @param stored_file $file
+     * @return void
+     */
+    private function cleanup_downloaded_backup($file) {
+        try {
+            if ($file && $file->get_filename() !== '.') {
+                $filename = $file->get_filename();
+                $file->delete();
+                $this->log("Deleted downloaded backup file: {$filename}");
+            }
+        } catch (\Exception $e) {
+            // Don't fail the restoration if cleanup fails
+            $this->log('Error cleaning up backup file: ' . $e->getMessage());
         }
     }
 }

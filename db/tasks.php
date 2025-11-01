@@ -45,4 +45,14 @@ $tasks = [
                 'dayofweek' => '*',
                 'disabled' => 0,
         ],
+        [
+                'classname' => '\local_coursetransfer\task\cleanup_old_backup_files_task',
+                'blocking' => 0,
+                'minute' => '30',
+                'hour' => '2',
+                'day' => '*',
+                'month' => '*',
+                'dayofweek' => '*',
+                'disabled' => 0,
+        ],
 ];

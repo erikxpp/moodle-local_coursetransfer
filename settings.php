@@ -100,6 +100,26 @@ if ($hassiteconfig) {
             get_string('remove_cat_cleanup_desc', 'local_coursetransfer'),
             false));
 
+    // Backup file cleanup settings
+    $settings->add(new admin_setting_heading('local_coursetransfer/backupcleanupheading',
+            get_string('backup_cleanup_settings', 'local_coursetransfer'),
+            get_string('backup_cleanup_settings_desc', 'local_coursetransfer')));
+
+    $settings->add(new admin_setting_configcheckbox('local_coursetransfer/auto_cleanup_origin_backup',
+            get_string('auto_cleanup_origin_backup', 'local_coursetransfer'),
+            get_string('auto_cleanup_origin_backup_desc', 'local_coursetransfer'),
+            true));
+
+    $settings->add(new admin_setting_configcheckbox('local_coursetransfer/auto_cleanup_target_backup',
+            get_string('auto_cleanup_target_backup', 'local_coursetransfer'),
+            get_string('auto_cleanup_target_backup_desc', 'local_coursetransfer'),
+            true));
+
+    $settings->add(new admin_setting_configtext('local_coursetransfer/backup_retention_hours',
+            get_string('backup_retention_hours', 'local_coursetransfer'),
+            get_string('backup_retention_hours_desc', 'local_coursetransfer'),
+            24, PARAM_INT));
+
     // Download optimization settings
     $settings->add(new admin_setting_heading('local_coursetransfer/downloadheading',
             get_string('download_settings', 'local_coursetransfer'),
