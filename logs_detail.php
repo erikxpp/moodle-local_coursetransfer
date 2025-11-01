@@ -95,12 +95,20 @@ function render_logs_timeline($logs, $direction) {
         }
         
         if (!empty($log->task_id)) {
-            $tasklink = html_writer::link(
-                new moodle_url('/admin/tasklogs.php', ['logid' => $log->task_id]),
-                '📋 View Task #' . $log->task_id,
-                ['target' => '_blank', 'class' => 'btn btn-sm btn-outline-primary']
+            // Display task ID and classname (link to adhoc tasks page)
+            $taskinfo = html_writer::div(
+                html_writer::tag('strong', '📋 Adhoc Task ID: ') . $log->task_id,
+                'mt-2'
             );
-            $html .= html_writer::div($tasklink, 'mt-2');
+            if (!empty($log->task_classname)) {
+                $classparts = explode('\\', $log->task_classname);
+                $shortname = end($classparts);
+                $taskinfo .= html_writer::div(
+                    html_writer::tag('small', 'Class: ' . html_writer::tag('code', $shortname)),
+                    'text-muted'
+                );
+            }
+            $html .= $taskinfo;
         }
         
         if (!empty($log->extra_data)) {
@@ -394,10 +402,11 @@ if (!empty($adhoctasks)) {
         $classparts = explode('\\', $task->classname);
         $shortname = end($classparts);
         
+        // Link to view the adhoc task details in scheduled tasks page
         $tasklink = html_writer::link(
-            new moodle_url('/admin/tasklogs.php', ['logid' => $task->id]),
-            '🔍 ' . get_string('view_logs', 'local_coursetransfer'),
-            ['target' => '_blank', 'class' => 'btn btn-sm btn-secondary']
+            new moodle_url('/admin/tool/task/adhoctasks.php'),
+            '� ' . get_string('view_task', 'local_coursetransfer'),
+            ['target' => '_blank', 'class' => 'btn btn-sm btn-secondary', 'title' => 'View adhoc tasks']
         );
         
         $tasktable->data[] = [
