@@ -104,9 +104,13 @@ try {
                 $coursesid .= '-'. $course->id;
             }
         }
+        // Check if status exists in STATUS array, fallback to error status if not found
+        $statuskey = isset(coursetransfer::STATUS[$item->status]) 
+            ? coursetransfer::STATUS[$item->status]['shortname'] 
+            : 'error';
         printf($mask,
                 $item->id, $item->target_request_id, $item->siteurl, $item->target_category_id, $item->origin_category_id,
-                get_string('status_' . coursetransfer::STATUS[$item->status]['shortname'], 'local_coursetransfer'),
+                get_string('status_' . $statuskey, 'local_coursetransfer'),
                 $coursesid, $error, $item->userid, $item->timemodified, $item->timecreated);
     }
     exit(0);

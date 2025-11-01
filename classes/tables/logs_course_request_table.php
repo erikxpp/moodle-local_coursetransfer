@@ -161,16 +161,25 @@ class logs_course_request_table extends table_sql {
      * @throws moodle_exception
      */
     public function col_status(stdClass $row): string {
-        if ( (int)$row->status === coursetransfer_request::STATUS_ERROR ) {
+        // Check if status exists in STATUS array, fallback to error status if not found
+        if (!isset(coursetransfer::STATUS[$row->status])) {
+            $statusinfo = coursetransfer::STATUS[coursetransfer_request::STATUS_ERROR];
+            $statuskey = 'error';
+            $errortext = 'Unknown status: ' . $row->status;
+        } else {
+            $statusinfo = coursetransfer::STATUS[$row->status];
+            $statuskey = $statusinfo['shortname'];
+            $errortext = $row->error_code . ': ' . $row->error_message;
+        }
+
+        if ( (int)$row->status === coursetransfer_request::STATUS_ERROR || !isset(coursetransfer::STATUS[$row->status]) ) {
             return '<button type="button" class="btn btn-danger label-status" data-container="body" data-toggle="popover"
-             data-placement="bottom" data-content="'. $row->error_code . ': ' . $row->error_message .'">'
-                . get_string('status_'.coursetransfer::STATUS[$row->status]['shortname'],
-                    'local_coursetransfer') .'
+             data-placement="bottom" data-content="'. $errortext .'">'
+                . get_string('status_' . $statuskey, 'local_coursetransfer') .'
             </button>';
         } else {
-            return '<label class="label-status text-' . coursetransfer::STATUS[$row->status]['alert'] . '">'
-                . get_string('status_'.coursetransfer::STATUS[$row->status]['shortname'],
-                    'local_coursetransfer') . '</label>';
+            return '<label class="label-status text-' . $statusinfo['alert'] . '">'
+                . get_string('status_' . $statuskey, 'local_coursetransfer') . '</label>';
         }
     }
 

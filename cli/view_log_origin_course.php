@@ -96,9 +96,13 @@ try {
     $items = \local_coursetransfer\coursetransfer_request::get_by_origin_course_id($courseid);
     foreach ($items as $item) {
         $error = !empty($item->error_code) ? $item->error_code . ': ' . $item->error_message : '-';
+        // Check if status exists in STATUS array, fallback to error status if not found
+        $statuskey = isset(coursetransfer::STATUS[$item->status]) 
+            ? coursetransfer::STATUS[$item->status]['shortname'] 
+            : 'error';
         printf($mask,
                 $item->id, $item->target_request_id, $item->siteurl, $item->target_course_id, $item->origin_course_id,
-                get_string('status_' . coursetransfer::STATUS[$item->status]['shortname'], 'local_coursetransfer'),
+                get_string('status_' . $statuskey, 'local_coursetransfer'),
                 $error, $item->origin_backup_size, $item->userid, $item->timemodified, $item->timecreated);
     }
     exit(0);

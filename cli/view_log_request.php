@@ -135,8 +135,11 @@ try {
                 $bool = (int)$item === 1 ? 'true' : 'false';
                 cli_writeln( $key . ': ' . $bool);
             } else if ($key === 'status') {
-                cli_writeln( $key . ': ' . get_string('status_' .
-                                coursetransfer::STATUS[$item]['shortname'], 'local_coursetransfer'));
+                // Check if status exists in STATUS array, fallback to error status if not found
+                $statuskey = isset(coursetransfer::STATUS[$item]) 
+                    ? coursetransfer::STATUS[$item]['shortname'] 
+                    : 'error';
+                cli_writeln( $key . ': ' . get_string('status_' . $statuskey, 'local_coursetransfer'));
             } else {
                 cli_writeln( $key . ': ' . $item );
             }

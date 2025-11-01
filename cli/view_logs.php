@@ -126,10 +126,14 @@ try {
 
     foreach ($items as $item) {
         $error = !empty($item->error_code) ? $item->error_code . ': ' . $item->error_message : '-';
+        // Check if status exists in STATUS array, fallback to error status if not found
+        $statuskey = isset(coursetransfer::STATUS[$item->status]) 
+            ? coursetransfer::STATUS[$item->status]['shortname'] 
+            : 'error';
         printf($mask,
                 $item->id, $item->type, $item->direction, $item->siteurl, $item->target_course_id, $item->origin_course_id,
                 $item->target_category_id, $item->origin_category_id,
-                get_string('status_' . coursetransfer::STATUS[$item->status]['shortname'], 'local_coursetransfer'),
+                get_string('status_' . $statuskey, 'local_coursetransfer'),
                 $item->userid, $item->timemodified, $item->timecreated, $error);
     }
 
