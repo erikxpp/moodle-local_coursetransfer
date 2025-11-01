@@ -27,55 +27,59 @@
   Example context (json):
 
 }}
-<table style="width: 100%">
-    <thead>
+<table class="table table-striped table-hover table-sm" style="width: 100%; font-size: 12px;">
+    <thead class="thead-dark">
     <tr>
-        <th></th>
+        <th style="width: 40px;"></th>
         {{# has_logs }}
-        <th>{{#str}} origin_course_id, local_coursetransfer {{/str}}</th>
-        <th>{{#str}} target_course_id, local_coursetransfer {{/str}}</th>
+        <th style="width: 70px;">{{#str}} origin_course_id, local_coursetransfer {{/str}}</th>
+        <th style="width: 70px;">{{#str}} target_course_id, local_coursetransfer {{/str}}</th>
         {{/ has_logs }}
         {{^ has_logs }}
-            <th>{{#str}} step2_course_id, local_coursetransfer {{/str}}</th>
+            <th style="width: 70px;">{{#str}} step2_course_id, local_coursetransfer {{/str}}</th>
         {{/ has_logs }}
-        <th>{{#str}} step2_course_name, local_coursetransfer {{/str}}</th>
-        <th>{{#str}} step2_course_shortname, local_coursetransfer {{/str}}</th>
-        <th>{{#str}} step2_course_idnumber, local_coursetransfer {{/str}}</th>
-        <th>{{#str}} step2_course_categoryid, local_coursetransfer {{/str}}</th>
-        <th>{{#str}} step2_course_categoryname, local_coursetransfer {{/str}}</th>
+        <th style="min-width: 200px;">{{#str}} step2_course_name, local_coursetransfer {{/str}}</th>
+        <th style="min-width: 120px;">{{#str}} step2_course_shortname, local_coursetransfer {{/str}}</th>
+        <th style="width: 100px;">{{#str}} step2_course_idnumber, local_coursetransfer {{/str}}</th>
+        <th style="width: 70px;">{{#str}} step2_course_categoryid, local_coursetransfer {{/str}}</th>
+        <th style="min-width: 150px;">{{#str}} step2_course_categoryname, local_coursetransfer {{/str}}</th>
         {{# has_status }}
-            <th>{{#str}} status, local_coursetransfer {{/str}}</th>
+            <th style="width: 120px;">{{#str}} status, local_coursetransfer {{/str}}</th>
         {{/ has_status }}
         {{# has_logs }}
-        <th>{{#str}} view_logs, local_coursetransfer {{/str}}</th>
+        <th style="width: 100px; text-align: center;">{{#str}} view_logs, local_coursetransfer {{/str}}</th>
         {{/ has_logs }}
     </tr>
     </thead>
     <tbody>
     {{# category.courses }}
         <tr data-action="course">
-            <td><input type="checkbox"
+            <td style="text-align: center;"><input type="checkbox"
                        name="radiogroup"
                        data-action="select"
                        data-courseid="{{ id }}"
                        {{# disabled }}disabled{{/ disabled }} {{# checked }}checked{{/ checked }}></td>
             {{# has_logs }}
-            <td id="origin_id">{{ origin_id }}</td>
-            <td id="target_course_id"><a href="{{ target_url }}" target="_blank">{{ target_course_id }}</a></td>
+            <td id="origin_id" style="text-align: center;">{{ origin_id }}</td>
+            <td id="target_course_id" style="text-align: center;"><a href="{{ target_url }}" target="_blank">{{ target_course_id }}</a></td>
             {{/ has_logs }}
             {{^ has_logs }}
-                <td id="courseid"><a href="{{ url }}" target="_blank">{{ id }}</a></td>
+                <td id="courseid" style="text-align: center;"><a href="{{ url }}" target="_blank">{{ id }}</a></td>
             {{/ has_logs }}
             <td>{{ fullname }}</td>
             <td>{{ shortname }}</td>
             <td>{{ idnumber }}</td>
-            <td>{{ categoryid }}</td>
+            <td style="text-align: center;">{{ categoryid }}</td>
             <td>{{ categoryname }}</td>
             {{# has_status }}
                 <td>{{ status }}</td>
             {{/ has_status }}
             {{# has_logs }}
-                <td><a href="{{ log_url }}" target="_blank" title="{{#str}} view_logs, local_coursetransfer {{/str}}"><i class="fa fa-search"></i> {{#str}} view_logs, local_coursetransfer {{/str}}</a></td>
+                <td style="text-align: center;">
+                    <a href="{{ log_url }}" target="_blank" class="btn btn-sm btn-info" title="{{#str}} view_logs, local_coursetransfer {{/str}}" style="padding: 2px 8px; font-size: 11px;">
+                        <i class="fa fa-search"></i>
+                    </a>
+                </td>
             {{/ has_logs }}
             </tr>
     {{/ category.courses }}

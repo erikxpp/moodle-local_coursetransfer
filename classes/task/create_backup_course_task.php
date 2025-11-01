@@ -221,7 +221,7 @@ class create_backup_course_task extends \core\task\asynchronous_backup_task {
             $this->log($e->getMessage());
             
             // Log exception error
-            if (isset($requestoriginid)) {
+            if (isset($requestoriginid) && isset($requestorigin)) {
                 coursetransfer_logger::error(
                     $requestoriginid,
                     coursetransfer_logger::DIRECTION_ORIGIN,
@@ -230,6 +230,23 @@ class create_backup_course_task extends \core\task\asynchronous_backup_task {
                     $e->getCode(),
                     ['exception' => get_class($e), 'trace' => $e->getTraceAsString()]
                 );
+                
+                // Update local status to ERROR
+                $requestorigin->status = coursetransfer_request::STATUS_ERROR;
+                $requestorigin->error_code = $e->getCode();
+                $requestorigin->error_message = $e->getMessage();
+                coursetransfer_request::insert_or_update($requestorigin, $requestorigin->id);
+                
+                // Notify target about the error
+                if (!$istest && isset($request) && isset($user) && isset($requestid)) {
+                    try {
+                        $request->target_backup_course_error(
+                            $user, $requestid, $e->getMessage(), [], 0
+                        );
+                    } catch (\Exception $notifyException) {
+                        mtrace('Failed to notify target about backup error: ' . $notifyException->getMessage());
+                    }
+                }
             }
         }
         $this->log_finish("Course Transfer Backup Finishing...");

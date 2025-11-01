@@ -164,6 +164,14 @@ class coursetransfer_restore {
                     return true;
                 } else {
                     if (!array_key_exists('errors', $results)) {
+                        // Log warning but continue
+                        coursetransfer_logger::warning(
+                            $request->id,
+                            coursetransfer_logger::DIRECTION_TARGET,
+                            'RESTORE_PRECHECK_WARNINGS',
+                            'Warnings in precheck but continuing: ' . json_encode($results)
+                        );
+                        
                         $request->error_code = '104003';
                         $request->error_message = 'Warnings en precheck: ' . json_encode($rc->get_precheck_results());
                         coursetransfer_request::insert_or_update($request, $request->id);
@@ -172,6 +180,14 @@ class coursetransfer_restore {
                         return true;
                     }
                     // Error in precheck.
+                    coursetransfer_logger::error(
+                        $request->id,
+                        coursetransfer_logger::DIRECTION_TARGET,
+                        coursetransfer_logger::ACTION_RESTORE_FAILED,
+                        'Error in precheck: ' . json_encode($results),
+                        '104002'
+                    );
+                    
                     $request->status = coursetransfer_request::STATUS_ERROR;
                     $request->error_code = '104002';
                     $request->error_message = 'Error en precheck: ' . json_encode($rc->get_precheck_results());
@@ -179,6 +195,15 @@ class coursetransfer_restore {
                     return false;
                 }
             } else {
+                // Log invalid backup file error
+                coursetransfer_logger::error(
+                    $request->id,
+                    coursetransfer_logger::DIRECTION_TARGET,
+                    coursetransfer_logger::ACTION_RESTORE_FAILED,
+                    'MBZ file is invalid. Plan is NULL: ' . $file->get_filepath(),
+                    '104001'
+                );
+                
                 $request->status = coursetransfer_request::STATUS_ERROR;
                 $request->error_code = '104001';
                 $request->error_message = 'MBZ file is invalid. Plan is NULL: ' . $file->get_filepath();
@@ -187,6 +212,16 @@ class coursetransfer_restore {
             }
 
         } catch (\Exception $e) {
+            // Log restore failure
+            coursetransfer_logger::error(
+                $request->id,
+                coursetransfer_logger::DIRECTION_TARGET,
+                coursetransfer_logger::ACTION_RESTORE_FAILED,
+                'Restore exception: ' . $e->getMessage(),
+                '10400',
+                ['exception' => get_class($e), 'trace' => $e->getTraceAsString()]
+            );
+            
             $request->status = coursetransfer_request::STATUS_ERROR;
             $request->error_code = '10400';
             $request->error_message = $e->getMessage();
