@@ -73,12 +73,12 @@ if ($hassiteconfig) {
     $settings->add(new admin_setting_configtext('local_coursetransfer/target_restore_course_max_size',
         get_string('setting_target_restore_course_max_size', 'local_coursetransfer'),
         get_string('setting_target_restore_course_max_size_desc', 'local_coursetransfer'),
-            500, PARAM_INT));
+            3072, PARAM_INT));
 
     $settings->add(new admin_setting_configtext('local_coursetransfer/request_timeout',
         get_string('request_timeout', 'local_coursetransfer'),
         get_string('request_timeout_desc', 'local_coursetransfer'),
-            20, PARAM_INT));
+            1800, PARAM_INT));
 
     $settings->add(new admin_setting_configempty('local_coursetransfer/target_sites',
             new lang_string('setting_target_sites', 'local_coursetransfer'),
