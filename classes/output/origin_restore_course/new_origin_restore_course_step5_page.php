@@ -61,10 +61,28 @@ class new_origin_restore_course_step5_page extends new_origin_restore_course_ste
      * @throws coding_exception
      */
     public function __construct(stdClass $course) {
+        global $DB;
         parent::__construct($course);
         $this->site = required_param('site', PARAM_INT);
         $this->restoreid = required_param('restoreid', PARAM_INT);
         $this->targetid = required_param('id', PARAM_INT);
+        
+        // Validation: Check if parameters are valid
+        if ($this->restoreid <= 0) {
+            throw new \moodle_exception('Invalid restoreid parameter: ' . $this->restoreid);
+        }
+        
+        if ($this->targetid <= 0) {
+            throw new \moodle_exception('Invalid id parameter: ' . $this->targetid);
+        }
+        
+        // Verify target course exists (this course should be the target)
+        if (!$DB->record_exists('course', ['id' => $this->targetid])) {
+            throw new \moodle_exception('Target course does not exist. Course ID: ' . $this->targetid);
+        }
+        
+        // Log for debugging
+        error_log("Step5 Page - Site: {$this->site}, RestoreID: {$this->restoreid}, TargetID: {$this->targetid}");
     }
 
     /**

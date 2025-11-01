@@ -287,8 +287,27 @@ class coursetransfer_request {
     public static function set_request_restore_course(stdClass $user,
             stdClass $site, int $targetcourseid, int $origincourseid, configuration_course $configuration,
             array $sections, int $requestcatid = null): stdClass {
-        global $USER;
+        global $USER, $DB;
+        
+        // Critical validation: Verify target course exists
+        if ($targetcourseid <= 0) {
+            throw new \Exception('Invalid target course ID: ' . $targetcourseid);
+        }
+        
+        if (!$DB->record_exists('course', ['id' => $targetcourseid])) {
+            throw new \Exception('Target course does not exist in database. Course ID: ' . $targetcourseid);
+        }
+        
+        // Validation for origin course ID (should be positive)
+        if ($origincourseid <= 0) {
+            throw new \Exception('Invalid origin course ID: ' . $origincourseid);
+        }
+        
         $userid = is_null($user) ? $USER->id : $user->id;
+        
+        // Log request creation for debugging
+        error_log("Creating CourseTransfer Request - Target: {$targetcourseid}, Origin: {$origincourseid}, User: {$userid}");
+        
         $object = new stdClass();
         $object->type = self::TYPE_COURSE;
         $object->siteurl = $site->host;

@@ -62,12 +62,28 @@ class download_file_course_task extends \core\task\adhoc_task {
      * @throws moodle_exception
      */
     public function execute() {
-        global $CFG;
+        global $CFG, $DB;
         
         $this->log_start("Download File Backup Course Remote and Restore Starting...");
         $fileurl = $this->get_custom_data()->fileurl;
         $requestid = $this->get_custom_data()->requestid;
         $request = coursetransfer_request::get($requestid);
+        
+        // Critical validation: Check if request exists and has valid target_course_id
+        if (!$request) {
+            throw new \Exception('Course transfer request not found with ID: ' . $requestid);
+        }
+        
+        if (empty($request->target_course_id) || $request->target_course_id <= 0) {
+            throw new \Exception('Invalid target_course_id in request: ' . ($request->target_course_id ?? 'NULL'));
+        }
+        
+        // Verify that the target course actually exists in database
+        if (!$DB->record_exists('course', ['id' => $request->target_course_id])) {
+            throw new \Exception('Target course does not exist in database. Course ID: ' . $request->target_course_id);
+        }
+        
+        $this->log("Validated request ID: {$requestid}, Target Course ID: {$request->target_course_id}");
 
         try {
             $fs = get_file_storage();
@@ -99,8 +115,14 @@ class download_file_course_task extends \core\task\adhoc_task {
             $this->log('Backup File Download Success!');
 
             // Step 3: Create Moodle file from temporary file
-            $context = context_course::instance($request->destiny_course_id);
-            $filename = 'local_coursetransfer_' . $request->origin_course_id . '_' . time() . '.mbz';
+            // Double-check target_course_id before creating context
+            if (empty($request->target_course_id) || $request->target_course_id <= 0) {
+                throw new \Exception('Cannot create course context: invalid target_course_id = ' . ($request->target_course_id ?? 'NULL'));
+            }
+            
+            $this->log("Creating context for course ID: {$request->target_course_id}");
+            $context = context_course::instance($request->target_course_id);
+            $filename = 'local_coursetransfer_' . $request->courseid . '_' . time() . '.mbz';
 
             $fileinfo = [
                 'contextid' => $context->id,
@@ -195,40 +217,75 @@ class download_file_course_task extends \core\task\adhoc_task {
         
         $curl = new \curl();
         
-        // Configure curl with Moodle best practices
+        // Configure curl with enhanced settings for large files
+        $download_timeout = $filesize > 1073741824 ? 7200 : 1800; // 2 hours for files >1GB, 30 min otherwise
+        
         $curl->setopt([
             'CURLOPT_FILE' => $fp,
-            'CURLOPT_TIMEOUT' => get_config('local_coursetransfer', 'download_timeout') ?: 1800, // 30 minutes default
-            'CURLOPT_CONNECTTIMEOUT' => get_config('local_coursetransfer', 'connect_timeout') ?: 30,
+            'CURLOPT_TIMEOUT' => $download_timeout,
+            'CURLOPT_CONNECTTIMEOUT' => get_config('local_coursetransfer', 'connect_timeout') ?: 300, // 5 minutes
+            'CURLOPT_LOW_SPEED_LIMIT' => 1024, // Minimum 1KB/s
+            'CURLOPT_LOW_SPEED_TIME' => 300,   // For 5 minutes (detect stalled downloads)
             'CURLOPT_FOLLOWLOCATION' => true,
             'CURLOPT_SSL_VERIFYPEER' => get_config('local_coursetransfer', 'ssl_verify') !== false,
             'CURLOPT_SSL_VERIFYHOST' => get_config('local_coursetransfer', 'ssl_verify') !== false ? 2 : 0,
-            'CURLOPT_USERAGENT' => 'Moodle/' . $CFG->version . ' CourseTransfer/2.0',
+            'CURLOPT_USERAGENT' => 'Moodle/' . $CFG->version . ' CourseTransfer/2.0 Enhanced',
+            'CURLOPT_BUFFERSIZE' => 524288, // 512KB buffer for better performance
+            'CURLOPT_TCP_KEEPALIVE' => 1,   // Keep connection alive for long transfers
             'CURLOPT_NOPROGRESS' => false,
         ]);
         
-        // Progress tracking variables
+        $this->log("Configured for large file download: timeout={$download_timeout}s, size=" . $this->format_bytes($filesize));
+        
+        // Enhanced progress tracking variables
         $lastpercent = 0;
         $lastlogtime = time();
+        $starttime = time();
+        $last_downloaded = 0;
         
-        // Set progress callback
+        // Set enhanced progress callback
         $curl->setopt([
-            'CURLOPT_PROGRESSFUNCTION' => function($resource, $download_total, $downloaded, $upload_total, $uploaded) use (&$lastpercent, &$lastlogtime) {
-                if ($download_total > 0) {
+            'CURLOPT_PROGRESSFUNCTION' => function($resource, $download_total, $downloaded, $upload_total, $uploaded) use (&$lastpercent, &$lastlogtime, &$starttime, &$last_downloaded) {
+                if ($download_total > 0 && $downloaded > 0) {
                     $percent = round(($downloaded / $download_total) * 100);
                     $currenttime = time();
+                    $elapsed_total = $currenttime - $starttime;
+                    $elapsed_since_log = $currenttime - $lastlogtime;
                     
-                    // Log every 10% or every 60 seconds (whichever comes first)
-                    if ($percent >= $lastpercent + 10 || $currenttime >= $lastlogtime + 60) {
-                        $speed = $downloaded > 0 && $currenttime > $lastlogtime ? 
-                            $this->format_bytes($downloaded / max(1, $currenttime - $lastlogtime)) . '/s' : 'calculating...';
+                    // Log every 5% or every 2 minutes for large files
+                    if ($percent >= $lastpercent + 5 || $elapsed_since_log >= 120) {
+                        // Calculate speeds with proper zero handling
+                        $avg_speed = ($elapsed_total > 0 && $downloaded > 0) ? $downloaded / $elapsed_total : 0;
+                        $current_speed = ($elapsed_since_log > 0 && $downloaded > $last_downloaded) ? 
+                            ($downloaded - $last_downloaded) / $elapsed_since_log : 0;
                         
-                        $this->log("Download progress: {$percent}% (" . 
-                                 $this->format_bytes($downloaded) . " / " . 
-                                 $this->format_bytes($download_total) . ") - Speed: {$speed}");
+                        // Estimate remaining time with safety checks
+                        $remaining_bytes = max(0, $download_total - $downloaded);
+                        $eta = ($avg_speed > 0 && $remaining_bytes > 0) ? $remaining_bytes / $avg_speed : 0;
+                        
+                        // Format ETA safely
+                        $eta_formatted = 'calculating...';
+                        if ($eta > 0 && $eta < 86400) { // Less than 24 hours
+                            $eta_formatted = gmdate('H:i:s', $eta);
+                        } elseif ($eta >= 86400) {
+                            $eta_formatted = 'more than 24h';
+                        }
+                        
+                        $this->log(sprintf(
+                            "Download: %d%% (%s/%s) - Speed: %s/s (avg: %s/s) - ETA: %s - Elapsed: %dm%ds",
+                            $percent,
+                            $this->format_bytes($downloaded),
+                            $this->format_bytes($download_total),
+                            $this->format_bytes(max(0, $current_speed)),
+                            $this->format_bytes(max(0, $avg_speed)),
+                            $eta_formatted,
+                            floor($elapsed_total / 60),
+                            $elapsed_total % 60
+                        ));
                         
                         $lastpercent = $percent;
                         $lastlogtime = $currenttime;
+                        $last_downloaded = $downloaded;
                     }
                 }
                 return 0; // Continue download
@@ -242,13 +299,37 @@ class download_file_course_task extends \core\task\adhoc_task {
         
         fclose($fp);
         
-        // Check for errors
+        // Enhanced error checking with detailed diagnostics
+        $total_time = time() - $starttime;
+        $downloaded_size = file_exists($tempfile) ? filesize($tempfile) : 0;
+        
         if (!$result || $info['http_code'] != 200) {
             if (file_exists($tempfile)) {
                 unlink($tempfile);
             }
-            $error_msg = $errno ? "cURL error {$errno}" : "HTTP {$info['http_code']}";
-            $this->log("Download failed: {$error_msg}");
+            
+            $error_details = sprintf(
+                "Download failed - HTTP: %d, cURL errno: %d, Total time: %ds, Downloaded: %s, Expected: %s",
+                $info['http_code'] ?? 0,
+                $errno,
+                $total_time,
+                $this->format_bytes($downloaded_size),
+                $this->format_bytes($filesize)
+            );
+            
+            $this->log($error_details);
+            
+            // Log additional curl info for debugging
+            if (isset($info['total_time'])) {
+                $this->log(sprintf(
+                    "cURL diagnostics - Connect: %.2fs, Pretransfer: %.2fs, Total: %.2fs, Speed: %s/s",
+                    $info['connect_time'] ?? 0,
+                    $info['pretransfer_time'] ?? 0,
+                    $info['total_time'] ?? 0,
+                    $this->format_bytes($info['speed_download'] ?? 0)
+                ));
+            }
+            
             return false;
         }
         
@@ -358,9 +439,15 @@ class download_file_course_task extends \core\task\adhoc_task {
      * @return string
      */
     private function format_bytes($bytes) {
+        // Handle zero or negative bytes to prevent log(0) error
+        if ($bytes <= 0) {
+            return '0 B';
+        }
+        
         $units = ['B', 'KB', 'MB', 'GB'];
         $power = floor(log($bytes, 1024));
         $power = min($power, count($units) - 1);
+        $power = max($power, 0); // Ensure power is not negative
         
         return round($bytes / pow(1024, $power), 2) . ' ' . $units[$power];
     }

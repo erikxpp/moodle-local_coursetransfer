@@ -94,6 +94,28 @@ define([
             let siteurl = this.site;
             let courseid = this.restoreid;
             let targetid = this.targetid;
+            
+            // Validation: Check if required parameters are valid
+            if (!courseid || courseid === "" || courseid === "undefined" || courseid === "null" || courseid <= 0) {
+                let errors = [{'code': '13004', 'msg': 'Invalid or missing course ID (restoreid): ' + courseid}];
+                self.renderErrors(errors, alertbox);
+                this.node.find(ACTIONS.RESTORE).prop('disabled', false);
+                return;
+            }
+            
+            if (!targetid || targetid === "" || targetid === "undefined" || targetid === "null" || targetid <= 0) {
+                let errors = [{'code': '13005', 'msg': 'Invalid or missing target ID: ' + targetid}];
+                self.renderErrors(errors, alertbox);
+                this.node.find(ACTIONS.RESTORE).prop('disabled', false);
+                return;
+            }
+            
+            if (!siteurl || siteurl === "" || siteurl === "undefined" || siteurl === "null" || siteurl <= 0) {
+                let errors = [{'code': '13006', 'msg': 'Invalid or missing site URL: ' + siteurl}];
+                self.renderErrors(errors, alertbox);
+                this.node.find(ACTIONS.RESTORE).prop('disabled', false);
+                return;
+            }
             let sessiondata = JSON.parse(sessionStorage.getItem($("[data-course-sessionStorageId]")
                 .attr("data-course-sessionStorageId")));
             let configuration = {};

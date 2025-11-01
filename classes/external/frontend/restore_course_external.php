@@ -222,7 +222,7 @@ class restore_course_external extends external_api {
     public static function new_origin_restore_course_step5(int $siteurl, int $courseid, int $targetid,
                                                            array $configuration, array $sections): array {
 
-        global $USER;
+        global $USER, $DB;
         $params = self::validate_parameters(
             self::new_origin_restore_course_step5_parameters(), [
                 'siteurl' => $siteurl,
@@ -242,10 +242,49 @@ class restore_course_external extends external_api {
         $success = false;
         $errors = [];
         $data = new stdClass();
+        
+        // Validation 1: Check if target course exists
+        if (!$DB->record_exists('course', ['id' => $targetid])) {
+            $errors[] = [
+                'code' => '13001',
+                'msg' => 'Target course ID does not exist: ' . $targetid,
+            ];
+            return [
+                'success' => false,
+                'errors' => $errors,
+                'data' => $data,
+            ];
+        }
+        
+        // Validation 2: Check if courseid and targetid are valid (not zero or negative)
+        if ($courseid <= 0) {
+            $errors[] = [
+                'code' => '13002', 
+                'msg' => 'Invalid origin course ID: ' . $courseid,
+            ];
+        }
+        
+        if ($targetid <= 0) {
+            $errors[] = [
+                'code' => '13003',
+                'msg' => 'Invalid target course ID: ' . $targetid,
+            ];
+        }
+        
+        if (!empty($errors)) {
+            return [
+                'success' => false,
+                'errors' => $errors,
+                'data' => $data,
+            ];
+        }
         $nexturl = new moodle_url('/local/coursetransfer/origin_restore_course.php', ['id' => $targetid]);
         $data->nexturl = $nexturl->out(false);
 
         try {
+            // Log critical parameters for debugging
+            error_log("CourseTransfer Step5 - SiteURL: {$siteurl}, CourseID: {$courseid}, TargetID: {$targetid}");
+            
             $site = coursetransfer::get_site_by_position($siteurl);
             $target = $configuration['target_merge_activities'] ?
                     \backup::TARGET_EXISTING_ADDING : \backup::TARGET_EXISTING_DELETING;
@@ -254,6 +293,8 @@ class restore_course_external extends external_api {
                     $configuration['target_remove_enrols'],
                     $configuration['target_remove_groups']
             );
+            
+            error_log("CourseTransfer Step5 - Calling restore_course with target: {$targetid}, origin: {$courseid}");
             $res = coursetransfer::restore_course($USER, $site, $targetid, $courseid, $configuration, $sections);
             $success = $res['success'];
             if (!$success) {
