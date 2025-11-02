@@ -104,6 +104,32 @@ class create_backup_course_task extends \core\task\asynchronous_backup_task {
             // Get the backup controller by backup id. If controller is invalid, this task can never complete.
             if ($backuprecord->controller === '') {
                 mtrace('Bad backup controller status, invalid controller, ending backup execution.');
+                
+                // Mark request as error since controller is invalid
+                $requestorigin = coursetransfer_request::get($requestoriginid);
+                if ($requestorigin) {
+                    $requestorigin->status = coursetransfer_request::STATUS_ERROR;
+                    $requestorigin->error_code = 13002;
+                    $requestorigin->error_message = 'Invalid backup controller - backup cannot proceed';
+                    coursetransfer_request::insert_or_update($requestorigin, $requestorigin->id);
+                    
+                    coursetransfer_logger::error(
+                        $requestoriginid,
+                        coursetransfer_logger::DIRECTION_ORIGIN,
+                        coursetransfer_logger::ACTION_BACKUP_FAILED,
+                        $requestorigin->error_message,
+                        $requestorigin->error_code
+                    );
+                    
+                    // Notify target
+                    if (!$istest) {
+                        $site = coursetransfer_sites::get('target', $siteid);
+                        $request = new request($site);
+                        $userid = $requestorigin->userid;
+                        $user = \core_user::get_user($userid);
+                        $request->target_backup_course_error($user, $requestid, $requestorigin->error_message, []);
+                    }
+                }
                 return;
             }
 
@@ -116,14 +142,33 @@ class create_backup_course_task extends \core\task\asynchronous_backup_task {
             // Check that the backup is in the correct status and
             // that is set for asynchronous execution.
             if ($status == \backup::STATUS_AWAITING && $execution == \backup::EXECUTION_DELAYED) {
-                // Execute the backup.
-                $bc->execute_plan();
-
-                // Send message to user if enabled.
-                $messageenabled = (bool)get_config('backup', 'backup_async_message_users');
-                if ($messageenabled && $bc->get_status() == \backup::STATUS_FINISHED_OK) {
-                    $asynchelper = new async_helper('backup', $backupid);
-                    $asynchelper->send_message();
+                // Execute the backup - wrap in try-catch to handle execution errors
+                try {
+                    $bc->execute_plan();
+                    
+                    // Send message to user if enabled.
+                    $messageenabled = (bool)get_config('backup', 'backup_async_message_users');
+                    if ($messageenabled && $bc->get_status() == \backup::STATUS_FINISHED_OK) {
+                        $asynchelper = new async_helper('backup', $backupid);
+                        $asynchelper->send_message();
+                    }
+                } catch (\Exception $executeException) {
+                    // Log execution failure
+                    mtrace('Backup execution failed with exception: ' . $executeException->getMessage());
+                    $bc->set_status(\backup::STATUS_FINISHED_ERR);
+                    
+                    coursetransfer_logger::error(
+                        $requestoriginid,
+                        coursetransfer_logger::DIRECTION_ORIGIN,
+                        coursetransfer_logger::ACTION_BACKUP_FAILED,
+                        'Backup execution threw exception: ' . $executeException->getMessage(),
+                        $executeException->getCode(),
+                        [
+                            'exception' => get_class($executeException),
+                            'file' => $executeException->getFile(),
+                            'line' => $executeException->getLine()
+                        ]
+                    );
                 }
 
             } else {
@@ -146,6 +191,23 @@ class create_backup_course_task extends \core\task\asynchronous_backup_task {
                         $bc->get_courseid(), $result['backup_destination'], $requestorigin->id);
                 if ($resfileurl->success) {
                     mtrace('Course Transfer Backup - Creating File OK');
+                    
+                    // Wait a moment to ensure file is fully written and accessible
+                    sleep(2);
+                    
+                    // Verify file is actually accessible before notifying target
+                    $fileurl = $resfileurl->fileurl;
+                    $fileaccessible = self::verify_file_accessible($fileurl);
+                    
+                    if (!$fileaccessible) {
+                        mtrace('Course Transfer Backup - File created but not accessible yet, waiting...');
+                        sleep(3);
+                        $fileaccessible = self::verify_file_accessible($fileurl);
+                    }
+                    
+                    if (!$fileaccessible) {
+                        throw new moodle_exception('Backup file created but not accessible via webservice');
+                    }
                     
                     // Log successful backup completion
                     coursetransfer_logger::success(
@@ -190,30 +252,43 @@ class create_backup_course_task extends \core\task\asynchronous_backup_task {
                     }
                 }
             } else {
+                // Backup failed - mark as error
+                $requestorigin->status = coursetransfer_request::STATUS_ERROR;
+                $requestorigin->error_code = 13001;
+                $requestorigin->error_message = 'Backup execution failed with status: ' . $bc->get_status();
+                
                 // Log backup execution error
                 coursetransfer_logger::error(
                     $requestoriginid,
                     coursetransfer_logger::DIRECTION_ORIGIN,
                     coursetransfer_logger::ACTION_BACKUP_FAILED,
-                    'Backup execution failed with status: ' . $bc->get_status(),
-                    null,
+                    $requestorigin->error_message,
+                    $requestorigin->error_code,
                     ['result' => $result, 'status' => $bc->get_status()]
                 );
                 
+                // Notify target about the error
                 if (!$istest) {
-                    $res = $request->target_backup_course_error($user, $requestid, '', $result);
+                    $res = $request->target_backup_course_error($user, $requestid, $requestorigin->error_message, $result);
+                    
+                    // Check if notification failed
+                    if (!$res->success) {
+                        mtrace('Failed to notify target about backup error: ' . $res->errors[0]->msg);
+                    }
                 }
             }
-            if (!$istest) {
-                if (!$res->success) {
-                    $requestorigin->status = coursetransfer_request::STATUS_ERROR;
+            
+            // Final status check and save
+            if (!$istest && isset($res) && !$res->success) {
+                $requestorigin->status = coursetransfer_request::STATUS_ERROR;
+                if (isset($res->errors[0])) {
                     $requestorigin->error_code = $res->errors[0]->code;
                     $requestorigin->error_message = $res->errors[0]->msg;
-                    coursetransfer_request::insert_or_update($requestorigin, $requestorigin->id);
-                    mtrace('Course Transfer Backup ERROR: ' . $res->errors[0]->msg);
-                    $this->log(json_encode($res));
                 }
+                mtrace('Course Transfer Backup ERROR: ' . $requestorigin->error_message);
+                $this->log(json_encode($res));
             }
+            
             coursetransfer_request::insert_or_update($requestorigin, $requestorigin->id);
             $bc->destroy();
         } catch (moodle_exception $e) {
@@ -253,6 +328,53 @@ class create_backup_course_task extends \core\task\asynchronous_backup_task {
 
         $duration = time() - $started;
         mtrace('Backup completed in: ' . $duration . ' seconds');
+    }
+
+    /**
+     * Verify that backup file is accessible via webservice
+     *
+     * @param string $fileurl
+     * @return bool
+     */
+    protected static function verify_file_accessible(string $fileurl): bool {
+        try {
+            // Extract file path components from URL
+            $fs = get_file_storage();
+            
+            // Simple check: verify URL is well-formed and has required parameters
+            if (strpos($fileurl, '/webservice/pluginfile.php/') === false) {
+                return false;
+            }
+            
+            // Parse URL to get file components
+            $urlparts = parse_url($fileurl);
+            if (!$urlparts || !isset($urlparts['path'])) {
+                return false;
+            }
+            
+            // Extract path components
+            $pathparts = explode('/', trim($urlparts['path'], '/'));
+            
+            // Expected format: webservice/pluginfile.php/{contextid}/{component}/{filearea}/{itemid}/{filename}
+            if (count($pathparts) < 7) {
+                return false;
+            }
+            
+            $contextid = $pathparts[2];
+            $component = $pathparts[3];
+            $filearea = $pathparts[4];
+            $itemid = $pathparts[5];
+            $filename = $pathparts[6];
+            
+            // Check if file exists in Moodle file storage
+            $file = $fs->get_file($contextid, $component, $filearea, $itemid, '/', $filename);
+            
+            return ($file && !$file->is_directory() && $file->get_filesize() > 0);
+            
+        } catch (\Exception $e) {
+            mtrace('File accessibility check failed: ' . $e->getMessage());
+            return false;
+        }
     }
 
 }

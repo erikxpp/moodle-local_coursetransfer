@@ -127,12 +127,11 @@ class category_course_component implements renderable, templatable {
             $c->request_id = $request->id;
             $c->has_status = true;
             $status = (int)$request->status;
-            if (!empty($status)) {
-                if (isset(coursetransfer::STATUS[$status])) {
-                    $c->status = get_string(
-                            'status_' . coursetransfer::STATUS[$status]['shortname'],
-                            'local_coursetransfer');
-                }
+            // Use isset to check status value, not empty (STATUS_ERROR = 0 would fail with empty())
+            if (isset($request->status) && isset(coursetransfer::STATUS[$status])) {
+                $c->status = get_string(
+                        'status_' . coursetransfer::STATUS[$status]['shortname'],
+                        'local_coursetransfer');
             }
             $c->checked = true;
             $c->disabled = true;

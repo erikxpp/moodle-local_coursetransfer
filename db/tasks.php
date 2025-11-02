@@ -55,4 +55,14 @@ $tasks = [
                 'dayofweek' => '*',
                 'disabled' => 0,
         ],
+        [
+                'classname' => '\local_coursetransfer\task\check_stuck_transfers_task',
+                'blocking' => 0,
+                'minute' => '0',
+                'hour' => '*/2',
+                'day' => '*',
+                'month' => '*',
+                'dayofweek' => '*',
+                'disabled' => 0,
+        ],
 ];

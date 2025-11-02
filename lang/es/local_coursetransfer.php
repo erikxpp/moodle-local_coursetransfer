@@ -321,6 +321,7 @@ $string['courses_not_selected'] = 'No hay cursos seleccionados';
 $string['request_timeout'] = 'Timeout';
 $string['request_timeout_desc'] = 'Tiempo en segundos de espera petición CURL entre origen y destino';
 $string['clean_adhoc_failed_task'] = 'Tarea que limpia las tareas adhoc que han fallado de este componente';
+$string['check_stuck_transfers_task'] = 'Verificar transferencias atascadas';
 $string['remove_course_cleanup'] = 'Borrado definitivo curso';
 $string['remove_course_cleanup_desc'] = 'Si está activo, se borrará definitivamente el curso sin tener en cuenta la papelera de reciclaje';
 $string['remove_cat_cleanup'] = 'Borrado definitivo categoría';

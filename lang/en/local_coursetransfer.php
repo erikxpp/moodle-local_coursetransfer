@@ -319,6 +319,7 @@ $string['courses_not_selected'] = 'There are no courses selected';
 $string['request_timeout'] = 'Timeout';
 $string['request_timeout_desc'] = 'CURL request waiting time in seconds between source and target';
 $string['clean_adhoc_failed_task'] = 'Task that cleans up failed adhoc tasks from this component';
+$string['check_stuck_transfers_task'] = 'Check stuck transfers';
 $string['remove_course_cleanup'] = 'Definitive deletion of course';
 $string['remove_course_cleanup_desc'] = 'If active, the course will be permanently deleted without taking into account the recycle bin';
 $string['remove_cat_cleanup'] = 'Definitive deletion of category';

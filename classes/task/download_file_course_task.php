@@ -57,6 +57,16 @@ class download_file_course_task extends \core\task\adhoc_task {
     use \core\task\logging_trait;
 
     /**
+     * Maximum number of retry attempts before marking as failed
+     */
+    const MAX_RETRY_ATTEMPTS = 5;
+
+    /**
+     * Delay in seconds between retry attempts (exponential backoff)
+     */
+    const BASE_RETRY_DELAY = 60; // 1 minute base delay
+
+    /**
      * Execute.
      *
      * @throws dml_exception
@@ -103,13 +113,29 @@ class download_file_course_task extends \core\task\adhoc_task {
         
         $this->log("Validated request ID: {$requestid}, Target Course ID: {$request->target_course_id}");
 
+        // Get retry attempt number (0 for first attempt)
+        $retryattempt = isset($this->get_custom_data()->retry_attempt) ? 
+            $this->get_custom_data()->retry_attempt : 0;
+
+        if ($retryattempt > 0) {
+            $this->log("Retry attempt #{$retryattempt} of " . self::MAX_RETRY_ATTEMPTS);
+        }
+
         try {
             $fs = get_file_storage();
             
             // Step 1: Validate file size before download
             $filesize = $this->get_remote_file_size($fileurl);
             if ($filesize === false) {
-                throw new \Exception('Failed to get remote file size');
+                // File might not be ready yet - schedule retry instead of failing immediately
+                if ($retryattempt < self::MAX_RETRY_ATTEMPTS) {
+                    $this->schedule_retry($requestid, $fileurl, $retryattempt);
+                    $this->log('File not ready yet. Retry scheduled.');
+                    return; // Exit gracefully, retry will be executed later
+                } else {
+                    throw new \Exception('Failed to get remote file size after ' . 
+                        self::MAX_RETRY_ATTEMPTS . ' attempts. File may not exist on origin.');
+                }
             }
             
             $this->log("Remote file size: " . $this->format_bytes($filesize));
@@ -527,6 +553,46 @@ class download_file_course_task extends \core\task\adhoc_task {
             // Don't fail the download process if notification fails
             $this->log('Error notifying origin for cleanup: ' . $e->getMessage());
         }
+    }
+
+    /**
+     * Schedule a retry of this download task
+     *
+     * @param int $requestid
+     * @param string $fileurl
+     * @param int $currentattempt
+     * @return void
+     */
+    private function schedule_retry($requestid, $fileurl, $currentattempt) {
+        $nextattempt = $currentattempt + 1;
+        
+        // Exponential backoff: 1min, 2min, 4min, 8min, 16min
+        $delay = self::BASE_RETRY_DELAY * pow(2, $currentattempt);
+        
+        $retrytask = new download_file_course_task();
+        $retrytask->set_blocking(false);
+        $retrytask->set_custom_data([
+            'requestid' => $requestid,
+            'fileurl' => $fileurl,
+            'retry_attempt' => $nextattempt,
+        ]);
+        
+        // Schedule task to run after delay
+        $retrytask->set_next_run_time(time() + $delay);
+        
+        \core\task\manager::queue_adhoc_task($retrytask);
+        
+        coursetransfer_logger::warning(
+            $requestid,
+            coursetransfer_logger::DIRECTION_TARGET,
+            'DOWNLOAD_RETRY_SCHEDULED',
+            "Download retry #{$nextattempt} scheduled in {$delay} seconds (exponential backoff)",
+            null,
+            ['attempt' => $nextattempt, 'delay' => $delay, 'max_attempts' => self::MAX_RETRY_ATTEMPTS]
+        );
+        
+        $this->log("Retry #{$nextattempt} scheduled to run in {$delay} seconds (" . 
+            gmdate('i\m s\s', $delay) . ")");
     }
 
 }

@@ -438,18 +438,41 @@ class coursetransfer_request {
         $status = self::STATUS_NOT_STARTED;
         $requests = json_decode($request->origin_category_requests);
         $total = count($requests);
+        $completedcount = 0;
+        $haserrors = false;
+        $hasinprogress = false;
+        
         foreach ($requests as $req) {
             $courserequest = self::get($req);
-            if ((int)$courserequest->status > self::STATUS_NOT_STARTED) {
-                $status = self::STATUS_IN_PROGRESS;
+            $coursestatus = (int)$courserequest->status;
+            
+            // Check for errors (priority 1)
+            if ($coursestatus === self::STATUS_ERROR) {
+                $haserrors = true;
             }
-            if ((int)$courserequest->status === self::STATUS_COMPLETED) {
-                $total--;
+            
+            // Check for completed
+            if ($coursestatus === self::STATUS_COMPLETED) {
+                $completedcount++;
+            }
+            
+            // Check if any is in progress (not started, not error, not completed)
+            if ($coursestatus > self::STATUS_NOT_STARTED && 
+                $coursestatus !== self::STATUS_ERROR && 
+                $coursestatus !== self::STATUS_COMPLETED) {
+                $hasinprogress = true;
             }
         }
-        if ($total === 0) {
+        
+        // Priority: ERROR > COMPLETED > IN_PROGRESS > NOT_STARTED
+        if ($haserrors) {
+            $status = self::STATUS_ERROR;
+        } else if ($completedcount === $total) {
             $status = self::STATUS_COMPLETED;
+        } else if ($hasinprogress) {
+            $status = self::STATUS_IN_PROGRESS;
         }
+        
         return $status;
     }
 
