@@ -674,10 +674,23 @@ class coursetransfer {
                         false,
                         $configuration->nextruntime);
 
-                // 2. Create new course in this category.
-                $targetcourseid = course::create(
-                        core_course_category::get($targetcategoryid),
-                        $course->fullname, $course->shortname . uniqid());
+                // 2. Check if course already exists in target category and reuse it, or create temporary course.
+                global $DB;
+                $existingcourse = $DB->get_record('course', [
+                        'shortname' => $course->shortname,
+                        'category' => $targetcategoryid
+                ]);
+                
+                if ($existingcourse) {
+                    // Reuse existing course (from previous failed attempt or duplicate)
+                    $targetcourseid = $existingcourse->id;
+                } else {
+                    // Create temporary course with unique name that will be replaced by restore
+                    $targetcourseid = course::create(
+                            core_course_category::get($targetcategoryid),
+                            'Restaurando: ' . $course->fullname,
+                            'TEMP_RESTORE_' . time() . '_' . uniqid());
+                }
                 $origincourseid = $course->id;
 
                 // 3. Request Restore Course.
