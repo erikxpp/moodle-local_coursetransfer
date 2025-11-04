@@ -75,6 +75,7 @@ class logs_category_request_table extends table_sql {
                 'id',
                 'siteurl',
                 'origin_category_id',
+                'origin_category_name',
                 'status',
                 'origin_category_courses',
                 'userid',
@@ -87,6 +88,7 @@ class logs_category_request_table extends table_sql {
                 get_string('request_id', 'local_coursetransfer'),
                 get_string('siteurl', 'local_coursetransfer'),
                 get_string('origin_category_id', 'local_coursetransfer'),
+                get_string('origin_category_name', 'local_coursetransfer'),
                 get_string('status', 'local_coursetransfer'),
                 get_string('origin_category_courses', 'local_coursetransfer'),
                 get_string('userid', 'local_coursetransfer'),
@@ -131,6 +133,19 @@ class logs_category_request_table extends table_sql {
     public function col_origin_category_id(stdClass $row): string {
         $href = new moodle_url($row->siteurl . '/course/index.php', ['categoryid' => $row->origin_category_id]);
         return '<a href="' . $href->out(false) . '" target="_blank">' . $row->origin_category_id . '</a>';
+    }
+
+    /**
+     * Col Origin Category Name
+     *
+     * @param stdClass $row Full data of the current row.
+     * @return string
+     */
+    public function col_origin_category_name(stdClass $row): string {
+        // Display category name if available, otherwise show a dash
+        return !empty($row->origin_category_name) ? 
+            '<span title="' . s($row->origin_category_name) . '">' . s($row->origin_category_name) . '</span>' : 
+            '-';
     }
 
     /**
