@@ -124,16 +124,12 @@ class coursetransfer_restore {
             }
 
             $restoreoptions = [
-                    'overwrite_conf' => false,
+                    'overwrite_conf' => true,
                     'keep_roles_and_enrolments' => $keeprolesenrolments,
                     'keep_groups_and_groupings' => $keepgroupsgroupings,
+                    'course_fullname' => $fullname,
+                    'course_shortname' => $shortname,
             ];
-
-            if ($target === backup::TARGET_NEW_COURSE) {
-                $restoreoptions['overwrite_conf'] = true;
-                $restoreoptions['course_fullname'] = $fullname;
-                $restoreoptions['course_shortname'] = $shortname;
-            }
 
             if ($target === backup::TARGET_NEW_COURSE) {
                 $target = backup::TARGET_EXISTING_DELETING;

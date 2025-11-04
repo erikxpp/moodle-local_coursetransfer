@@ -682,14 +682,27 @@ class coursetransfer {
                 ]);
                 
                 if ($existingcourse) {
-                    // Reuse existing course (from previous failed attempt or duplicate)
+                    // Reuse existing course in same category (from previous failed attempt or duplicate)
                     $targetcourseid = $existingcourse->id;
                 } else {
-                    // Create temporary course with unique name that will be replaced by restore
-                    $targetcourseid = course::create(
-                            core_course_category::get($targetcategoryid),
-                            'Restaurando: ' . $course->fullname,
-                            'TEMP_RESTORE_' . time() . '_' . uniqid());
+                    // Check if shortname exists globally in any other category
+                    $shortnameexists = $DB->record_exists('course', ['shortname' => $course->shortname]);
+                    
+                    if ($shortnameexists) {
+                        // Shortname exists in another category, create with temporary unique shortname
+                        // The restore process with overwrite_conf=true will update it to the correct one
+                        $tempshortname = 'TEMP_RESTORE_' . time() . '_' . uniqid();
+                        $targetcourseid = course::create(
+                                core_course_category::get($targetcategoryid),
+                                'Restaurando: ' . $course->fullname,
+                                $tempshortname);
+                    } else {
+                        // Shortname doesn't exist, create with the actual shortname to avoid "_1" suffix
+                        $targetcourseid = course::create(
+                                core_course_category::get($targetcategoryid),
+                                'Restaurando: ' . $course->fullname,
+                                $course->shortname);
+                    }
                 }
                 $origincourseid = $course->id;
 
