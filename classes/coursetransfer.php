@@ -463,7 +463,17 @@ class coursetransfer {
             }
         } catch (moodle_exception $e) {
             $success = false;
-            $error = $e->getMessage();
+            // Enhanced error message with more context for debugging
+            $error = 'Failed to create backup file URL. ';
+            $error .= 'Error: ' . $e->getMessage() . ' | ';
+            $error .= 'Course ID: ' . $courseid . ' | ';
+            $error .= 'Request ID: ' . $requestoriginid . ' | ';
+            $error .= 'Expected filename: backup_' . time() . '_' . $requestoriginid . '.mbz | ';
+            $error .= 'Source file: ' . ($file ? $file->get_filename() : 'NULL') . ' | ';
+            $error .= 'Context: ' . ($context ? $context->id : 'NULL');
+            
+            // Log detailed error for debugging
+            error_log('CourseTransfer backup file creation failed: ' . $error);
         }
 
         $res->fileurl = $url;

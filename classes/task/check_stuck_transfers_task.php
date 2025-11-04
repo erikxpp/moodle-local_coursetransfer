@@ -50,10 +50,11 @@ use local_coursetransfer\coursetransfer_request;
 class check_stuck_transfers_task extends scheduled_task {
 
     /**
-     * Timeout in seconds (4 hours by default)
+     * Timeout in seconds (2 hours by default)
      * After this time without updates, a transfer is considered stuck
+     * Reduced from 4h to detect stuck transfers faster
      */
-    const STUCK_TIMEOUT = 14400;
+    const STUCK_TIMEOUT = 7200;
 
     /**
      * Get task name

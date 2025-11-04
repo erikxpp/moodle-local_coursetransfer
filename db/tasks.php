@@ -58,8 +58,8 @@ $tasks = [
         [
                 'classname' => '\local_coursetransfer\task\check_stuck_transfers_task',
                 'blocking' => 0,
-                'minute' => '0',
-                'hour' => '*/2',
+                'minute' => '*/30',
+                'hour' => '*',
                 'day' => '*',
                 'month' => '*',
                 'dayofweek' => '*',
