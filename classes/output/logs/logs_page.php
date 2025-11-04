@@ -111,7 +111,7 @@ class logs_page implements renderable, templatable {
     protected function get_logs_table(): string {
         $table = $this->table;
         $table->is_downloadable(false);
-        $table->pageable(false);
+        $table->pageable(true); // Enable pagination
         $select = 'csr.*';
         $from = '{local_coursetransfer_request} csr';
         $where = 'direction = :direction AND type = :type';
@@ -122,7 +122,11 @@ class logs_page implements renderable, templatable {
         $table->set_sql($select, $from, $where, $params);
         $table->sortable(false, 'id', SORT_DESC);
         $table->collapsible(false);
+        
+        // Include type and direction parameters in pagination URLs
+        $this->url->params(['type' => $this->type, 'direction' => $this->direction]);
         $table->define_baseurl($this->url);
+        
         ob_start();
         $table->out(10, true, false);
         $tablecontent = ob_get_contents();
