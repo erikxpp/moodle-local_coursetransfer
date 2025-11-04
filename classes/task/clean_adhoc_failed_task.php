@@ -52,6 +52,9 @@ class clean_adhoc_failed_task extends \core\task\scheduled_task {
 
     /** @var int Max FAIL Delay time in seconds */
     const MAX_FAILDELAY = 60;
+    
+    /** @var int Max running time for adhoc tasks (3 hours) */
+    const MAX_RUNNING_TIME = 10800;
 
     // Use the logging trait to get some nice, juicy, logging.
     use \core\task\logging_trait;
@@ -74,22 +77,62 @@ class clean_adhoc_failed_task extends \core\task\scheduled_task {
     public function execute() {
         global $DB;
         $this->log_start("Clean Adhoc Failed Task - Starting...");
+        
+        // 1. Clean tasks with faildelay > MAX_FAILDELAY
         $tasksdb = $DB->get_records_select('task_adhoc',
                 'component = ? AND faildelay > ?',
                 ['local_coursetransfer', self::MAX_FAILDELAY]);
+        
+        $failedcount = 0;
         if (count($tasksdb) > 0) {
             foreach ($tasksdb as $taskdb) {
                 try {
                     $DB->delete_records('task_adhoc', ['id' => $taskdb->id]);
-                    $this->log("Adhoc tasks remove" . json_encode($taskdb, JSON_PRETTY_PRINT));
+                    $failedcount++;
+                    $this->log("Removed failed adhoc task (ID: {$taskdb->id}, faildelay: {$taskdb->faildelay})");
                 } catch (moodle_exception $e) {
-                    $this->log("Adhoc tasks remove - ERROR" . json_encode($taskdb, JSON_PRETTY_PRINT) .
-                            ' - Msg: ' . $e->getMessage());
+                    $this->log("ERROR removing failed task {$taskdb->id}: " . $e->getMessage());
                 }
             }
+            $this->log("Cleaned {$failedcount} failed adhoc tasks with high faildelay");
         } else {
-            $this->log("Adhoc tasks with faildelay not found");
+            $this->log("No failed adhoc tasks with high faildelay found");
         }
-        $this->log_finish("Clean Adhoc Failed Task - Finishing...");
+        
+        // 2. Clean orphaned tasks that have been running for too long
+        $currenttime = time();
+        $maxstarttime = $currenttime - self::MAX_RUNNING_TIME;
+        
+        $orphanedtasks = $DB->get_records_select('task_adhoc',
+                'component = ? AND timestarted > 0 AND timestarted < ?',
+                ['local_coursetransfer', $maxstarttime]);
+        
+        $orphanedcount = 0;
+        if (count($orphanedtasks) > 0) {
+            foreach ($orphanedtasks as $taskdb) {
+                $runningtime = $currenttime - $taskdb->timestarted;
+                $hoursstuck = round($runningtime / 3600, 1);
+                
+                try {
+                    // Get task details for logging
+                    $classname = basename(str_replace('\\', '/', $taskdb->classname));
+                    
+                    $DB->delete_records('task_adhoc', ['id' => $taskdb->id]);
+                    $orphanedcount++;
+                    
+                    $this->log("Removed orphaned adhoc task (ID: {$taskdb->id}, Class: {$classname}, " .
+                              "Running for: {$hoursstuck} hours)");
+                    
+                } catch (moodle_exception $e) {
+                    $this->log("ERROR removing orphaned task {$taskdb->id}: " . $e->getMessage());
+                }
+            }
+            $this->log("Cleaned {$orphanedcount} orphaned adhoc tasks stuck in running state");
+        } else {
+            $this->log("No orphaned adhoc tasks found");
+        }
+        
+        $totalcleaned = $failedcount + $orphanedcount;
+        $this->log_finish("Clean Adhoc Failed Task - Finished. Total cleaned: {$totalcleaned}");
     }
 }

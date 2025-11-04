@@ -231,5 +231,90 @@ class check_stuck_transfers_task extends scheduled_task {
         $request->timemodified = time();
 
         $DB->update_record('local_coursetransfer_request', $request);
+        
+        // Clean up orphaned adhoc tasks for this request
+        $this->cleanup_orphaned_adhoc_tasks($request);
+    }
+    
+    /**
+     * Clean up orphaned adhoc tasks for a request
+     * 
+     * This removes adhoc tasks that are stuck in "running" state but don't have
+     * an actual process running, which can happen when PHP crashes or times out.
+     *
+     * @param \stdClass $request
+     */
+    protected function cleanup_orphaned_adhoc_tasks($request) {
+        global $DB;
+        
+        $classnames = [
+            '\\local_coursetransfer\\task\\create_backup_course_task',
+            '\\local_coursetransfer\\task\\download_file_course_task',
+            '\\local_coursetransfer\\task\\restore_course_task',
+        ];
+        
+        $cleaned = 0;
+        
+        foreach ($classnames as $classname) {
+            // Get all adhoc tasks for this class
+            $adhoctasks = $DB->get_records('task_adhoc', ['classname' => $classname]);
+            
+            foreach ($adhoctasks as $task) {
+                $customdata = @json_decode($task->customdata);
+                if (!$customdata) {
+                    continue;
+                }
+                
+                // Check if this task belongs to our stuck request
+                $belongstorequest = false;
+                
+                if ($classname === '\\local_coursetransfer\\task\\create_backup_course_task') {
+                    if (isset($customdata->requestoriginid) && $customdata->requestoriginid == $request->id) {
+                        $belongstorequest = true;
+                    }
+                } else {
+                    if (isset($customdata->requestid) && $customdata->requestid == $request->id) {
+                        $belongstorequest = true;
+                    }
+                }
+                
+                if ($belongstorequest) {
+                    // Check if task has been running for too long (> 3 hours)
+                    $runningtime = time() - $task->timestarted;
+                    if ($task->timestarted > 0 && $runningtime > 10800) { // 3 hours
+                        try {
+                            $DB->delete_records('task_adhoc', ['id' => $task->id]);
+                            $cleaned++;
+                            
+                            mtrace("    → Deleted orphaned adhoc task (ID: {$task->id}, Class: " . 
+                                   basename(str_replace('\\', '/', $classname)) . 
+                                   ", Running for: " . round($runningtime / 3600, 1) . " hours)");
+                            
+                            coursetransfer_logger::warning(
+                                $request->id,
+                                $request->direction == coursetransfer_request::DIRECTION_REQUEST ? 
+                                    coursetransfer_logger::DIRECTION_ORIGIN : 
+                                    coursetransfer_logger::DIRECTION_TARGET,
+                                'ADHOC_TASK_CLEANED',
+                                'Orphaned adhoc task removed after being stuck for ' . 
+                                    round($runningtime / 3600, 1) . ' hours',
+                                null,
+                                [
+                                    'task_id' => $task->id,
+                                    'classname' => $classname,
+                                    'hours_running' => round($runningtime / 3600, 1),
+                                ]
+                            );
+                        } catch (\Exception $e) {
+                            mtrace("    → ERROR deleting adhoc task {$task->id}: " . $e->getMessage());
+                        }
+                    }
+                }
+            }
+        }
+        
+        if ($cleaned > 0) {
+            mtrace("    → Cleaned up {$cleaned} orphaned adhoc task(s) for request {$request->id}");
+        }
     }
 }
