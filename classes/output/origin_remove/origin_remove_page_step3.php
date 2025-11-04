@@ -75,21 +75,27 @@ class origin_remove_page_step3 extends origin_remove_page_base {
         $courseids = array_flip($courseids);
         try {
             $request = new request($site);
-            $res = $request->origin_get_courses($USER);
-            if ($res->success) {
-                $courses = $res->data;
-                $datacourses = [];
-                foreach ($courses as $c) {
-                    if ( ! isset($courseids[$c->id])) {
-                        continue;
-                    }
-                    $datacourses[] = $c;
+            // Recuperar solo los cursos seleccionados (optimizado para evitar timeout).
+            $datacourses = [];
+            $haserrors = false;
+            $errors = [];
+            
+            foreach ($courseids as $courseid => $dummy) {
+                $res = $request->origin_get_course_detail($courseid, $USER);
+                if ($res->success && !empty($res->data)) {
+                    $course = is_array($res->data) ? reset($res->data) : $res->data;
+                    $datacourses[] = $course;
+                } else {
+                    $haserrors = true;
+                    $errormsg = !empty($res->errors) ? json_encode($res->errors) : "Unknown error";
+                    $errors[] = ['code' => '30002', 'msg' => "Error getting course $courseid: $errormsg"];
                 }
-                $data->courses = $datacourses;
-                $data->haserrors = false;
-            } else {
-                $data->errors = $res->errors;
-                $data->haserrors = true;
+            }
+            
+            $data->courses = $datacourses;
+            $data->haserrors = $haserrors;
+            if ($haserrors) {
+                $data->errors = $errors;
             }
         } catch (moodle_exception $e) {
             $data->errors = ['code' => '30002', 'msg' => $e->getMessage()];

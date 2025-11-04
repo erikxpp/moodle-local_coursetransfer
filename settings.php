@@ -108,12 +108,12 @@ if ($hassiteconfig) {
     $settings->add(new admin_setting_configcheckbox('local_coursetransfer/auto_cleanup_origin_backup',
             get_string('auto_cleanup_origin_backup', 'local_coursetransfer'),
             get_string('auto_cleanup_origin_backup_desc', 'local_coursetransfer'),
-            true));
+            false));
 
     $settings->add(new admin_setting_configcheckbox('local_coursetransfer/auto_cleanup_target_backup',
             get_string('auto_cleanup_target_backup', 'local_coursetransfer'),
             get_string('auto_cleanup_target_backup_desc', 'local_coursetransfer'),
-            true));
+            false));
 
     $settings->add(new admin_setting_configtext('local_coursetransfer/backup_retention_hours',
             get_string('backup_retention_hours', 'local_coursetransfer'),

@@ -104,47 +104,43 @@ class origin_restore_step3_page extends origin_restore_step_page {
         if (has_capability('local/coursetransfer:origin_view_courses', $context)) {
             try {
                 $request = new request($site);
-                // TODO. recuperar solo los elegidos.
-                $res = $request->origin_get_courses($USER);
-                if ($res->success) {
-                    $courses = $res->data;
-                    $datacourses = [];
-                    $coursesdest = coursetransfer::get_courses();
-                    $destinies = [];
-                    if (coursetransfer::can_restore_in_not_new_course($USER)) {
-                        foreach ($coursesdest as $cd) {
-                            $destinies[] = [
-                                    'id' => $cd->id,
-                                    'name' => $cd->fullname,
-                                    'shortname' => $cd->shortname,
-                            ];
-                        }
+                $datacourses = [];
+                $coursesdest = coursetransfer::get_courses();
+                $destinies = [];
+                if (coursetransfer::can_restore_in_not_new_course($USER)) {
+                    foreach ($coursesdest as $cd) {
+                        $destinies[] = [
+                                'id' => $cd->id,
+                                'name' => $cd->fullname,
+                                'shortname' => $cd->shortname,
+                        ];
                     }
-                    $cats = [];
-                    $categories = coursetransfer::get_categories();
-                    $default = reset($categories);
-                    $categorynamedefault = isset($default) ? $default->name : '';
-                    $categoryiddefault = isset($default) ? $default->id : 0;
-                    foreach ($categories as $cat) {
-                        $ct = new stdClass();
-                        $ct->id = $cat->id;
-                        $ct->name = $cat->get_nested_name();
-                        $cats[] = $ct;
-                    }
-                    foreach ($courses as $c) {
-                        if ( ! isset($courseids[$c->id])) {
-                            continue;
-                        }
-                        $c->destinies = $destinies;
-                        $datacourses[] = $c;
-                    }
-                    $data->categories = $cats;
-                    $data->courses = $datacourses;
-                    $data->haserrors = false;
-                } else {
-                    $data->errors = $res->errors;
-                    $data->haserrors = true;
                 }
+                $cats = [];
+                $categories = coursetransfer::get_categories();
+                $default = reset($categories);
+                $categorynamedefault = isset($default) ? $default->name : '';
+                $categoryiddefault = isset($default) ? $default->id : 0;
+                foreach ($categories as $cat) {
+                    $ct = new stdClass();
+                    $ct->id = $cat->id;
+                    $ct->name = $cat->get_nested_name();
+                    $cats[] = $ct;
+                }
+                
+                // Obtener detalles solo de los cursos seleccionados (optimizado).
+                foreach ($courseids as $courseid => $dummy) {
+                    $res = $request->origin_get_course_detail($courseid, $USER);
+                    if ($res->success && !empty($res->data)) {
+                        $course = is_array($res->data) ? reset($res->data) : $res->data;
+                        $course->destinies = $destinies;
+                        $datacourses[] = $course;
+                    }
+                }
+                
+                $data->categories = $cats;
+                $data->courses = $datacourses;
+                $data->haserrors = false;
             } catch (moodle_exception $e) {
                 $data->errors = ['code' => '20004', 'msg' => $e->getMessage()];
                 $data->haserrors = true;

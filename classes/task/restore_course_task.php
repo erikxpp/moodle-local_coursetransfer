@@ -72,6 +72,14 @@ class restore_course_task extends \core\task\adhoc_task {
         $fs = get_file_storage();
 
         $request = coursetransfer_request::get($requestid);
+        
+        // Check if this request was already completed successfully
+        if ($request && $request->status == coursetransfer_request::STATUS_COMPLETED) {
+            $this->log_start('Request ' . $requestid . ' already completed successfully');
+            $this->log_finish('Skipping duplicate task execution - request already finished');
+            return;
+        }
+        
         $file = $fs->get_file_by_id($fileid);
 
         // Log restore started
@@ -92,6 +100,14 @@ class restore_course_task extends \core\task\adhoc_task {
         );
 
         if (!$file) {
+            // Check again if request was completed by another task execution
+            $request = coursetransfer_request::get($requestid);
+            if ($request && $request->status == coursetransfer_request::STATUS_COMPLETED) {
+                $this->log('File not found but request already completed - likely cleaned up after successful restore');
+                $this->log_finish('Skipping duplicate task - file was cleaned up after successful previous execution');
+                return;
+            }
+            
             $this->log('Restore in Moodle not working beacuse File not found! :' . $fileid);
             
             // Log restore failure
