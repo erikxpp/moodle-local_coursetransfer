@@ -146,6 +146,12 @@ class restore_course_task extends \core\task\adhoc_task {
                 $request->status = coursetransfer_request::STATUS_COMPLETED;
                 coursetransfer_request::insert_or_update($request, $request->id);
 
+                // Notify origin that restore completed successfully so it can safely cleanup backup
+                // This prevents race condition where backup is deleted before restore completes
+                if (get_config('local_coursetransfer', 'auto_cleanup_origin_backup')) {
+                    $this->notify_origin_restore_completed($request);
+                }
+
                 // Cleanup downloaded backup file if auto cleanup is enabled
                 if (get_config('local_coursetransfer', 'auto_cleanup_target_backup')) {
                     $this->cleanup_downloaded_backup($file);
@@ -265,6 +271,61 @@ class restore_course_task extends \core\task\adhoc_task {
         } catch (\Exception $e) {
             // Don't fail the restoration if cleanup fails
             $this->log('Error cleaning up backup file: ' . $e->getMessage());
+        }
+    }
+
+    /**
+     * Notify origin site that restore completed successfully and backup can be safely deleted
+     * This prevents race condition where backup is deleted before restore finishes
+     *
+     * @param stdClass $request
+     * @return void
+     */
+    private function notify_origin_restore_completed($request) {
+        try {
+            $site = coursetransfer::get_site_by_url($request->siteurl);
+            if ($site) {
+                $api_request = new \local_coursetransfer\api\request($site);
+                $user = \core_user::get_user($request->userid);
+                
+                $response = $api_request->target_backup_course_downloaded($request->id, $user);
+                
+                if ($response->success) {
+                    $this->log('Successfully notified origin to cleanup backup file after restore completion');
+                    
+                    coursetransfer_logger::info(
+                        $request->id,
+                        coursetransfer_logger::DIRECTION_TARGET,
+                        'ORIGIN_CLEANUP_NOTIFIED',
+                        'Notified origin server that restore completed and backup can be safely deleted',
+                        ['request_id' => $request->id]
+                    );
+                } else {
+                    $this->log('Failed to notify origin for cleanup: ' . json_encode($response->errors));
+                    
+                    coursetransfer_logger::warning(
+                        $request->id,
+                        coursetransfer_logger::DIRECTION_TARGET,
+                        'ORIGIN_CLEANUP_NOTIFICATION_FAILED',
+                        'Failed to notify origin for cleanup, but restore was successful',
+                        null,
+                        ['errors' => $response->errors]
+                    );
+                }
+            }
+        } catch (\Exception $e) {
+            // Don't fail the restore process if notification fails
+            // The backup will be cleaned up by the scheduled cleanup task after 24h anyway
+            $this->log('Error notifying origin for cleanup: ' . $e->getMessage());
+            
+            coursetransfer_logger::warning(
+                $request->id,
+                coursetransfer_logger::DIRECTION_TARGET,
+                'ORIGIN_CLEANUP_NOTIFICATION_ERROR',
+                'Exception when notifying origin for cleanup: ' . $e->getMessage(),
+                null,
+                ['exception' => get_class($e)]
+            );
         }
     }
 }

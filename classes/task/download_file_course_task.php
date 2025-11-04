@@ -201,10 +201,9 @@ class download_file_course_task extends \core\task\adhoc_task {
             $request->status = coursetransfer_request::STATUS_DOWNLOADED;
             coursetransfer_request::insert_or_update($request, $request->id);
             
-            // Notify origin that backup was downloaded successfully so it can cleanup
-            if (get_config('local_coursetransfer', 'auto_cleanup_origin_backup')) {
-                $this->notify_origin_backup_downloaded($request);
-            }
+            // NOTE: We do NOT notify origin here anymore to avoid race condition.
+            // The notification will be sent AFTER successful restore in restore_course_task.php
+            // This ensures the backup file is not deleted before restore completes.
             
             coursetransfer_restore::create_task_restore_course($request, $file);
             
