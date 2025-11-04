@@ -77,6 +77,7 @@ class logs_course_response_table extends table_sql {
                 'id',
                 'siteurl',
                 'origin_course_id',
+                'origin_course_shortname',
                 'target_course_id',
                 'status',
                 'origin_activities',
@@ -93,6 +94,7 @@ class logs_course_response_table extends table_sql {
                 get_string('request_id', 'local_coursetransfer'),
                 get_string('target_site', 'local_coursetransfer'),
                 get_string('origin_course_id', 'local_coursetransfer'),
+                get_string('origin_course_shortname', 'local_coursetransfer'),
                 get_string('target_course_id', 'local_coursetransfer'),
                 get_string('status', 'local_coursetransfer'),
                 get_string('origin_activities', 'local_coursetransfer'),
@@ -141,6 +143,19 @@ class logs_course_response_table extends table_sql {
     public function col_origin_course_id(stdClass $row): string {
         $href = new moodle_url('/course/view.php', ['id' => $row->origin_course_id]);
         return '<a href="' . $href->out(false) . '" target="_blank">' . $row->origin_course_id . '</a>';
+    }
+
+    /**
+     * Col Origin Course Shortname
+     *
+     * @param stdClass $row Full data of the current row.
+     * @return string
+     */
+    public function col_origin_course_shortname(stdClass $row): string {
+        // Display shortname if available, otherwise show a dash
+        return !empty($row->origin_course_shortname) ? 
+            '<span title="' . s($row->origin_course_shortname) . '">' . s($row->origin_course_shortname) . '</span>' : 
+            '-';
     }
 
     /**

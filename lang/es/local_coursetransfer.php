@@ -356,6 +356,7 @@ $string['response'] = 'Respuesta';
 $string['status'] = 'Estado';
 $string['course'] = 'Curso';
 $string['origin_course_id'] = 'ID Curso Origen';
+$string['origin_course_shortname'] = 'Nombre Corto Origen';
 $string['target_course_id'] = 'ID Curso Destino';
 $string['site_url'] = 'URL del Sitio';
 $string['created'] = 'Creado';

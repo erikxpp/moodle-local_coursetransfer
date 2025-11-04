@@ -354,6 +354,7 @@ $string['response'] = 'Response';
 $string['status'] = 'Status';
 $string['course'] = 'Course';
 $string['origin_course_id'] = 'Origin Course ID';
+$string['origin_course_shortname'] = 'Origin Course Shortname';
 $string['target_course_id'] = 'Target Course ID';
 $string['site_url'] = 'Site URL';
 $string['created'] = 'Created';
