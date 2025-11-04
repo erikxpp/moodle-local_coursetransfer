@@ -64,14 +64,15 @@ class restore_course_task extends \core\task\adhoc_task {
      * @throws moodle_exception
      */
     public function execute() {
+        
+        try {
+            $this->log_start("Restore Backup Course Remote Starting...");
 
-        $this->log_start("Restore Backup Course Remote Starting...");
+            $fileid = $this->get_custom_data()->fileid;
+            $requestid = $this->get_custom_data()->requestid;
+            $fs = get_file_storage();
 
-        $fileid = $this->get_custom_data()->fileid;
-        $requestid = $this->get_custom_data()->requestid;
-        $fs = get_file_storage();
-
-        $request = coursetransfer_request::get($requestid);
+            $request = coursetransfer_request::get($requestid);
         
         // Check if this request was already completed successfully
         if ($request && $request->status == coursetransfer_request::STATUS_COMPLETED) {
@@ -196,14 +197,59 @@ class restore_course_task extends \core\task\adhoc_task {
                         $this->log($remcaterrormsg);
                     }
                 }
-            } else {
+                } else {
                 $this->log('Restore in Moodle is Failed!');
             }
             $this->log_finish("Restore Backup Course Remote Finishing...");
         }
-    }
-
-    /**
+        
+        } catch (\Throwable $e) {
+            // Catch ALL types of errors including Exception, Error, Fatal errors, etc.
+            $this->log('CRITICAL ERROR during restore: ' . $e->getMessage());
+            
+            // Ensure we have minimum required variables
+            if (!isset($requestid)) {
+                $requestid = isset($this->get_custom_data()->requestid) ? 
+                    $this->get_custom_data()->requestid : null;
+            }
+            
+            // Try to get request object if not set
+            if (!isset($request) && $requestid) {
+                try {
+                    $request = coursetransfer_request::get($requestid);
+                } catch (\Exception $getException) {
+                    $this->log('Could not retrieve request: ' . $getException->getMessage());
+                }
+            }
+            
+            // Log exception error
+            if ($requestid) {
+                coursetransfer_logger::error(
+                    $requestid,
+                    coursetransfer_logger::DIRECTION_TARGET,
+                    coursetransfer_logger::ACTION_RESTORE_FAILED,
+                    'Critical exception during restore: ' . $e->getMessage(),
+                    $e->getCode() ?: '11000',
+                    ['exception' => get_class($e), 'trace' => $e->getTraceAsString()]
+                );
+            }
+            
+            // Update request status if we have request object
+            if (isset($request) && $request) {
+                $request->status = coursetransfer_request::STATUS_ERROR;
+                $request->error_code = $e->getCode() ?: '11000';
+                $request->error_message = 'Restore failed: ' . $e->getMessage();
+                
+                try {
+                    coursetransfer_request::insert_or_update($request, $request->id);
+                } catch (\Exception $updateException) {
+                    $this->log('Failed to update request status: ' . $updateException->getMessage());
+                }
+            }
+            
+            $this->log_finish("Restore Backup Course Remote Finishing with ERROR...");
+        }
+    }    /**
      * Cleanup downloaded backup file after successful restoration
      *
      * @param stored_file $file

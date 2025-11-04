@@ -208,23 +208,45 @@ class download_file_course_task extends \core\task\adhoc_task {
             
             coursetransfer_restore::create_task_restore_course($request, $file);
             
-        } catch (\Exception $e) {
+        } catch (\Throwable $e) {
+            // Catch ALL types of errors including Exception, Error, Fatal errors, etc.
             $this->log('Error: ' . $e->getMessage());
             
-            // Log download failure
-            coursetransfer_logger::error(
-                $requestid,
-                coursetransfer_logger::DIRECTION_TARGET,
-                coursetransfer_logger::ACTION_DOWNLOAD_FAILED,
-                'Download failed: ' . $e->getMessage(),
-                '13000',
-                ['exception' => get_class($e), 'trace' => $e->getTraceAsString()]
-            );
+            // Ensure we have request object
+            if (!isset($request) || !$request) {
+                if (isset($requestid)) {
+                    try {
+                        $request = coursetransfer_request::get($requestid);
+                    } catch (\Exception $getException) {
+                        $this->log('Could not retrieve request: ' . $getException->getMessage());
+                    }
+                }
+            }
             
-            $request->status = coursetransfer_request::STATUS_ERROR;
-            $request->error_code = '13000';
-            $request->error_message = $e->getMessage();
-            coursetransfer_request::insert_or_update($request, $request->id);
+            // Log download failure
+            if (isset($requestid)) {
+                coursetransfer_logger::error(
+                    $requestid,
+                    coursetransfer_logger::DIRECTION_TARGET,
+                    coursetransfer_logger::ACTION_DOWNLOAD_FAILED,
+                    'Download failed: ' . $e->getMessage(),
+                    $e->getCode() ?: '13000',
+                    ['exception' => get_class($e), 'trace' => $e->getTraceAsString()]
+                );
+            }
+            
+            // Update request status if we have request object
+            if (isset($request) && $request) {
+                $request->status = coursetransfer_request::STATUS_ERROR;
+                $request->error_code = $e->getCode() ?: '13000';
+                $request->error_message = 'Download failed: ' . $e->getMessage();
+                
+                try {
+                    coursetransfer_request::insert_or_update($request, $request->id);
+                } catch (\Exception $updateException) {
+                    $this->log('Failed to update request status: ' . $updateException->getMessage());
+                }
+            }
         }
         
         $this->log_finish("Download File Backup Course Remote and Restore Finishing...");

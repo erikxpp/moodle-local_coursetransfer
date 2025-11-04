@@ -291,36 +291,85 @@ class create_backup_course_task extends \core\task\asynchronous_backup_task {
             
             coursetransfer_request::insert_or_update($requestorigin, $requestorigin->id);
             $bc->destroy();
-        } catch (moodle_exception $e) {
+        } catch (\Throwable $e) {
+            // Catch ALL types of errors including moodle_exception, Exception, Error, Fatal errors, etc.
             mtrace('Course Transfer Backup ERROR: ' . $e->getMessage());
             $this->log($e->getMessage());
             
-            // Log exception error
-            if (isset($requestoriginid) && isset($requestorigin)) {
+            // Ensure we have minimum required variables
+            if (!isset($requestoriginid)) {
+                $requestoriginid = isset($this->get_custom_data()->requestoriginid) ? 
+                    $this->get_custom_data()->requestoriginid : null;
+            }
+            if (!isset($requestid)) {
+                $requestid = isset($this->get_custom_data()->requestid) ? 
+                    $this->get_custom_data()->requestid : null;
+            }
+            if (!isset($istest)) {
+                $istest = isset($this->get_custom_data()->istest) ? 
+                    $this->get_custom_data()->istest : true;
+            }
+            
+            // Try to get or create request object
+            if (!isset($requestorigin) && $requestoriginid) {
+                try {
+                    $requestorigin = coursetransfer_request::get($requestoriginid);
+                } catch (\Exception $getException) {
+                    mtrace('Could not retrieve request: ' . $getException->getMessage());
+                }
+            }
+            
+            // Log exception error if we have request
+            if (isset($requestoriginid) && $requestoriginid) {
                 coursetransfer_logger::error(
                     $requestoriginid,
                     coursetransfer_logger::DIRECTION_ORIGIN,
                     coursetransfer_logger::ACTION_BACKUP_FAILED,
                     'Exception during backup: ' . $e->getMessage(),
-                    $e->getCode(),
+                    $e->getCode() ?: 13003,
                     ['exception' => get_class($e), 'trace' => $e->getTraceAsString()]
                 );
-                
-                // Update local status to ERROR
+            }
+            
+            // Update local status to ERROR if we have request object
+            if (isset($requestorigin) && $requestorigin) {
                 $requestorigin->status = coursetransfer_request::STATUS_ERROR;
-                $requestorigin->error_code = $e->getCode();
-                $requestorigin->error_message = $e->getMessage();
-                coursetransfer_request::insert_or_update($requestorigin, $requestorigin->id);
+                $requestorigin->error_code = $e->getCode() ?: 13003;
+                $requestorigin->error_message = 'Backup failed: ' . $e->getMessage();
+                
+                try {
+                    coursetransfer_request::insert_or_update($requestorigin, $requestorigin->id);
+                } catch (\Exception $updateException) {
+                    mtrace('Failed to update request status: ' . $updateException->getMessage());
+                }
                 
                 // Notify target about the error
-                if (!$istest && isset($request) && isset($user) && isset($requestid)) {
+                if (!$istest && $requestid) {
                     try {
-                        $request->target_backup_course_error(
-                            $user, $requestid, $e->getMessage(), [], 0
-                        );
+                        if (!isset($siteid)) {
+                            $siteid = $this->get_custom_data()->targetsite ?? null;
+                        }
+                        if ($siteid) {
+                            $site = coursetransfer_sites::get('target', $siteid);
+                            $request = new request($site);
+                            $userid = $requestorigin->userid ?? 2; // Fallback to admin
+                            $user = \core_user::get_user($userid);
+                            $request->target_backup_course_error(
+                                $user, $requestid, $requestorigin->error_message, [], 0
+                            );
+                        }
                     } catch (\Exception $notifyException) {
                         mtrace('Failed to notify target about backup error: ' . $notifyException->getMessage());
                     }
+                }
+            }
+            
+            // Clean up backup controller if exists
+            if (isset($bc) && $bc) {
+                try {
+                    $bc->destroy();
+                } catch (\Exception $destroyException) {
+                    mtrace('Failed to destroy backup controller: ' . $destroyException->getMessage());
                 }
             }
         }
