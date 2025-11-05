@@ -146,8 +146,9 @@ class restore_course_task extends \core\task\adhoc_task {
                 $request->status = coursetransfer_request::STATUS_COMPLETED;
                 coursetransfer_request::insert_or_update($request, $request->id);
 
-                // Notify origin that restore completed successfully so it can safely cleanup backup
+                // Notify origin that restore completed successfully so it can safely cleanup backup .mbz file
                 // This prevents race condition where backup is deleted before restore completes
+                // IMPORTANT: This only deletes the .mbz file, NEVER the original course or category
                 if (get_config('local_coursetransfer', 'auto_cleanup_origin_backup')) {
                     $this->notify_origin_restore_completed($request);
                 }
@@ -157,51 +158,20 @@ class restore_course_task extends \core\task\adhoc_task {
                     $this->cleanup_downloaded_backup($file);
                 }
 
-                $site = coursetransfer::get_site_by_url($request->siteurl);
-
-                // Category Request logical.
+                // Send completion notifications
                 if (!is_null($request->request_category_id)) {
+                    // Category restore completed
                     $reqcat = coursetransfer_request::update_status_request_cat($request->request_category_id);
                     $this->log('Update Status Category Request');
-                    $remcaterrormsg = null;
                     if ($reqcat->status === coursetransfer_request::STATUS_COMPLETED) {
                         coursetransfer_notification::send_restore_category_completed(
                                 $request->userid, $request->origin_category_id);
-                        if ($reqcat->origin_remove_category) {
-                            $this->log('Origin Category Removing...');
-                            if (has_capability('local/coursetransfer:origin_remove_category',
-                                    context_system::instance())) {
-                                try {
-                                    coursetransfer::remove_category($site, $request->origin_category_id);
-                                } catch (moodle_exception $e) {
-                                    $remcaterrormsg = 'Origin Category Removed not working. Error: ' . $e->getMessage();
-                                    $this->log($remcaterrormsg);
-                                }
-                            } else {
-                                $remcaterrormsg = 'You dont have permission for remove category';
-                                $this->log($remcaterrormsg);
-                            }
-                        }
+                        $this->log('Category restore completed - .mbz files will be cleaned up by origin');
                     }
                 } else {
+                    // Individual course restore completed
                     coursetransfer_notification::send_restore_course_completed($request->userid, $request->target_course_id);
-                }
-
-                // Remove origen course logical.
-                if ($request->origin_remove_course && !$request->origin_remove_category) {
-                    $this->log('Origin Course Removing...');
-                    $remcouerrormsg = null;
-                    if (has_capability('local/coursetransfer:origin_remove_course', context_system::instance())) {
-                        try {
-                            coursetransfer::remove_course($site, $request->origin_course_id);
-                        } catch (moodle_exception $e) {
-                            $remcouerrormsg = 'Origin Course Removed not working. Error: ' . $e->getMessage();
-                            $this->log($remcouerrormsg);
-                        }
-                    } else {
-                        $remcaterrormsg = 'You dont have permission for remove course';
-                        $this->log($remcaterrormsg);
-                    }
+                    $this->log('Course restore completed - .mbz file will be cleaned up by origin');
                 }
                 } else {
                 $this->log('Restore in Moodle is Failed!');
