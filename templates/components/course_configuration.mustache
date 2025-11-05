@@ -96,17 +96,6 @@
             </div>
         </li>
         {{/has_origin_user_data }}
-        {{#can_remove_origin_course }}
-        <li class="configuration-group">
-            <div class="checkbox">
-                <input class="configuration-checkbox" id="origin_remove_course" type="checkbox">
-            </div>
-            <div class="config-info">
-                <div class="config-title"><i class="fa fa-exclamation-triangle mr-2" aria-hidden="true" style="color: orange"></i>{{#str}} restore_origin_remove, local_coursetransfer {{/str}}</div>
-                <div class="config-desc">{{#str}} restore_origin_remove_desc, local_coursetransfer {{/str}}</div>
-            </div>
-        </li>
-        {{/can_remove_origin_course }}
         {{#has_scheduled_time }}
         <li class="configuration-group">
             <div class="checkbox">
