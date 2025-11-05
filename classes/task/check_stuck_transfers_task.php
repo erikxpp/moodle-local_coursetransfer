@@ -57,6 +57,13 @@ class check_stuck_transfers_task extends scheduled_task {
     const STUCK_TIMEOUT = 7200;
 
     /**
+     * Maximum time a task can run before being considered stuck (4 hours)
+     * This catches tasks that are actually running but hung/frozen
+     * Increased to 4 hours to allow large category migrations with multiple courses
+     */
+    const TASK_RUNNING_TIMEOUT = 14400; // 4 hours
+
+    /**
      * Get task name
      *
      * @return string
@@ -73,23 +80,27 @@ class check_stuck_transfers_task extends scheduled_task {
 
         mtrace('Starting stuck transfers check...');
 
-        // Get current time minus timeout
+        // STEP 1: Clean up stuck adhoc tasks first (tasks running for too long)
+        $this->cleanup_stuck_adhoc_tasks();
+
+        // STEP 2: Find transfers that are stuck without active tasks
         $timeoutthreshold = time() - self::STUCK_TIMEOUT;
 
         // Find requests that are:
         // 1. In progress (status between NOT_STARTED and COMPLETED, excluding ERROR)
         // 2. Haven't been modified in STUCK_TIMEOUT seconds
-        // 3. Are individual courses (type = TYPE_COURSE)
+        // 3. Are individual courses OR categories
         $sql = "SELECT r.*
                 FROM {local_coursetransfer_request} r
-                WHERE r.type = :type
+                WHERE (r.type = :type_course OR r.type = :type_category)
                   AND r.status > :notstartedstatus
                   AND r.status != :errorstatus
                   AND r.status != :completedstatus
                   AND r.timemodified < :timeout";
 
         $params = [
-            'type' => coursetransfer_request::TYPE_COURSE,
+            'type_course' => coursetransfer_request::TYPE_COURSE,
+            'type_category' => coursetransfer_request::TYPE_CATEGORY,
             'notstartedstatus' => coursetransfer_request::STATUS_NOT_STARTED,
             'errorstatus' => coursetransfer_request::STATUS_ERROR,
             'completedstatus' => coursetransfer_request::STATUS_COMPLETED,
@@ -113,7 +124,7 @@ class check_stuck_transfers_task extends scheduled_task {
 
             if (!$hasactivetask) {
                 // Mark as ERROR
-                $this->mark_as_stuck($request);
+                $this->mark_request_as_stuck_no_tasks($request);
                 $markedasstuck++;
                 mtrace("  - Request ID {$request->id}: Marked as ERROR (no active tasks, stuck for " . 
                        round((time() - $request->timemodified) / 3600, 1) . " hours)");
@@ -123,6 +134,119 @@ class check_stuck_transfers_task extends scheduled_task {
         }
 
         mtrace("Stuck transfers check completed. Marked {$markedasstuck} transfers as ERROR.");
+    }
+
+    /**
+     * Clean up adhoc tasks that have been running for too long
+     * 
+     * This proactively detects and removes tasks that are stuck in "running" state
+     * for longer than TASK_RUNNING_TIMEOUT seconds.
+     */
+    protected function cleanup_stuck_adhoc_tasks() {
+        global $DB;
+
+        mtrace('Checking for stuck adhoc tasks...');
+
+        $timeoutthreshold = time() - self::TASK_RUNNING_TIMEOUT;
+
+        $classnames = [
+            // Tareas de transferencia (pueden ejecutarse por horas en cursos grandes)
+            '\\local_coursetransfer\\task\\create_backup_course_task',      // Origen: Crear backup
+            '\\local_coursetransfer\\task\\download_file_course_task',      // Destino: Descargar backup
+            '\\local_coursetransfer\\task\\restore_course_task',            // Destino: Restaurar curso
+            
+            // Tareas de limpieza (pueden atascarse si hay muchos archivos)
+            '\\local_coursetransfer\\task\\remove_course_task',             // Eliminar curso
+            '\\local_coursetransfer\\task\\remove_category_task',           // Eliminar categoría
+            '\\local_coursetransfer\\task\\cleanup_course_bin_task',        // Limpiar papelera curso
+            '\\local_coursetransfer\\task\\cleanup_category_bin_task',      // Limpiar papelera categoría
+        ];
+
+        $totalcleaned = 0;
+
+        foreach ($classnames as $classname) {
+            // Find tasks that have been running for too long
+            // timestarted > 0 means the task is currently running
+            // timestarted < threshold means it's been running for too long
+            $sql = "SELECT *
+                    FROM {task_adhoc}
+                    WHERE classname = :classname
+                      AND timestarted > 0
+                      AND timestarted < :threshold";
+
+            $stucktasks = $DB->get_records_sql($sql, [
+                'classname' => $classname,
+                'threshold' => $timeoutthreshold,
+            ]);
+
+            if (!empty($stucktasks)) {
+                mtrace('  Found ' . count($stucktasks) . ' stuck tasks for ' . 
+                       basename(str_replace('\\', '/', $classname)));
+
+                foreach ($stucktasks as $task) {
+                    $runningtime = time() - $task->timestarted;
+                    $customdata = @json_decode($task->customdata);
+
+                    try {
+                        // Get request ID for logging
+                        $requestid = null;
+                        if ($customdata) {
+                            if (isset($customdata->requestoriginid)) {
+                                $requestid = $customdata->requestoriginid;
+                            } else if (isset($customdata->requestid)) {
+                                $requestid = $customdata->requestid;
+                            }
+                        }
+
+                        // Delete the stuck task
+                        $DB->delete_records('task_adhoc', ['id' => $task->id]);
+                        $totalcleaned++;
+
+                        mtrace("    → Deleted stuck adhoc task (ID: {$task->id}, " .
+                               "Request: " . ($requestid ?? 'unknown') . ", " .
+                               "Running for: " . round($runningtime / 3600, 1) . " hours)");
+
+                        // Log the cleanup
+                        if ($requestid) {
+                            // Try to get the request to determine direction
+                            $request = $DB->get_record('local_coursetransfer_request', ['id' => $requestid]);
+                            if ($request) {
+                                coursetransfer_logger::warning(
+                                    $requestid,
+                                    $request->direction == coursetransfer_request::DIRECTION_REQUEST ?
+                                        coursetransfer_logger::DIRECTION_ORIGIN :
+                                        coursetransfer_logger::DIRECTION_TARGET,
+                                    'STUCK_ADHOC_TASK_CLEANED',
+                                    'Stuck adhoc task removed after running for ' .
+                                        round($runningtime / 3600, 1) . ' hours',
+                                    '13001',
+                                    [
+                                        'task_id' => $task->id,
+                                        'classname' => $classname,
+                                        'hours_running' => round($runningtime / 3600, 1),
+                                        'pid' => $task->pid ?? null,
+                                    ]
+                                );
+
+                                // Mark the request as ERROR
+                                if ($request->status != coursetransfer_request::STATUS_ERROR &&
+                                    $request->status != coursetransfer_request::STATUS_COMPLETED) {
+                                    $this->mark_request_as_stuck($request, $runningtime);
+                                }
+                            }
+                        }
+                    } catch (\Exception $e) {
+                        mtrace("    → ERROR deleting adhoc task {$task->id}: " . $e->getMessage());
+                    }
+                }
+            }
+        }
+
+        if ($totalcleaned > 0) {
+            mtrace("Total stuck adhoc tasks cleaned: {$totalcleaned}");
+        } else {
+            mtrace('No stuck adhoc tasks found.');
+        }
     }
 
     /**
@@ -199,11 +323,11 @@ class check_stuck_transfers_task extends scheduled_task {
     }
 
     /**
-     * Mark request as stuck (ERROR status)
+     * Mark request as stuck (ERROR status) - no active tasks variant
      *
      * @param \stdClass $request
      */
-    protected function mark_as_stuck($request) {
+    protected function mark_request_as_stuck_no_tasks($request) {
         global $DB;
 
         // Log the stuck transfer
@@ -235,6 +359,44 @@ class check_stuck_transfers_task extends scheduled_task {
         // Clean up orphaned adhoc tasks for this request
         $this->cleanup_orphaned_adhoc_tasks($request);
     }
+
+    /**
+     * Mark request as stuck due to long-running task
+     *
+     * @param \stdClass $request
+     * @param int $runningtime Time the task has been running in seconds
+     */
+    protected function mark_request_as_stuck($request, $runningtime) {
+        global $DB;
+
+        $hoursstuck = round($runningtime / 3600, 1);
+
+        // Log the stuck transfer
+        coursetransfer_logger::error(
+            $request->id,
+            $request->direction == coursetransfer_request::DIRECTION_REQUEST ?
+                coursetransfer_logger::DIRECTION_ORIGIN :
+                coursetransfer_logger::DIRECTION_TARGET,
+            'TRANSFER_STUCK_TASK',
+            "Transfer marked as ERROR: task has been running for {$hoursstuck} hours",
+            '13001',
+            [
+                'last_status' => $request->status,
+                'last_modified' => $request->timemodified,
+                'hours_running' => $hoursstuck,
+            ]
+        );
+
+        // Update request status
+        $request->status = coursetransfer_request::STATUS_ERROR;
+        $request->error_code = '13001';
+        $request->error_message = "⚠️ Esta transferencia ha sido cancelada automáticamente. " .
+                                  "La tarea de procesamiento estuvo ejecutándose por {$hoursstuck} horas, " .
+                                  "lo cual indica un problema. Por favor, intente nuevamente.";
+        $request->timemodified = time();
+
+        $DB->update_record('local_coursetransfer_request', $request);
+    }
     
     /**
      * Clean up orphaned adhoc tasks for a request
@@ -251,6 +413,10 @@ class check_stuck_transfers_task extends scheduled_task {
             '\\local_coursetransfer\\task\\create_backup_course_task',
             '\\local_coursetransfer\\task\\download_file_course_task',
             '\\local_coursetransfer\\task\\restore_course_task',
+            '\\local_coursetransfer\\task\\remove_course_task',
+            '\\local_coursetransfer\\task\\remove_category_task',
+            '\\local_coursetransfer\\task\\cleanup_course_bin_task',
+            '\\local_coursetransfer\\task\\cleanup_category_bin_task',
         ];
         
         $cleaned = 0;
