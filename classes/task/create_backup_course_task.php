@@ -227,7 +227,27 @@ class create_backup_course_task extends \core\task\asynchronous_backup_task {
                         $requestorigin->fileurl = $resfileurl->fileurl;
                         $requestorigin->origin_backup_url = $resfileurl->fileurl;
                         $requestorigin->origin_backup_size = $resfileurl->filesize;
-                        coursetransfer_request::insert_or_update($requestorigin, $requestorigin->id);
+                        
+                        // Update request with specific DB error handling
+                        try {
+                            coursetransfer_request::insert_or_update($requestorigin, $requestorigin->id);
+                        } catch (\dml_exception $dbException) {
+                            // Database error during request update
+                            coursetransfer_logger::error(
+                                $requestoriginid,
+                                coursetransfer_logger::DIRECTION_ORIGIN,
+                                'DATABASE_UPDATE_FAILED',
+                                'Failed to update request after successful backup creation',
+                                $dbException->getCode(),
+                                [
+                                    'table' => 'local_coursetransfer_request',
+                                    'operation' => 'update_backup_info',
+                                    'request_id' => $requestorigin->id,
+                                    'db_error' => $dbException->getMessage()
+                                ]
+                            );
+                            throw $dbException; // Re-throw to outer catch
+                        }
                     }
                     if (!$istest) {
                         $res = $request->target_backup_course_completed(

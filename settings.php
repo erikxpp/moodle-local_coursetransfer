@@ -118,7 +118,7 @@ if ($hassiteconfig) {
     $settings->add(new admin_setting_configtext('local_coursetransfer/backup_retention_hours',
             get_string('backup_retention_hours', 'local_coursetransfer'),
             get_string('backup_retention_hours_desc', 'local_coursetransfer'),
-            24, PARAM_INT));
+            48, PARAM_INT));
 
     // Log retention settings
     $settings->add(new admin_setting_heading('local_coursetransfer/logretentionheading',

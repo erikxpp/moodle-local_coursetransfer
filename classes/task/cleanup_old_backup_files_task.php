@@ -76,6 +76,7 @@ class cleanup_old_backup_files_task extends \core\task\scheduled_task {
         }
 
         // Cleanup target backups (in backup/course filearea)
+        // Only cleans ERROR and INCOMPLETED requests to avoid race condition
         if (get_config('local_coursetransfer', 'auto_cleanup_target_backup')) {
             $cleaned_target = $this->cleanup_target_backups($cutoff_time);
         }
@@ -165,11 +166,14 @@ class cleanup_old_backup_files_task extends \core\task\scheduled_task {
         $fs = get_file_storage();
 
         // Get target requests that are old enough and in failed/error state
+        // NOTE: Deliberately excludes STATUS_DOWNLOADED to prevent race condition where
+        // backup file is deleted while restore_course_task is queued or running.
+        // Only cleanup files that are definitely not needed (ERROR or INCOMPLETED).
         $sql = "SELECT DISTINCT r.id, r.target_course_id
                 FROM {local_coursetransfer_request} r
                 WHERE r.type = :type
                   AND r.direction = :direction
-                  AND r.status IN (:status_error, :status_incompleted, :status_downloaded)
+                  AND r.status IN (:status_error, :status_incompleted)
                   AND r.timemodified < :cutoff";
 
         $params = [
@@ -177,7 +181,6 @@ class cleanup_old_backup_files_task extends \core\task\scheduled_task {
             'direction' => coursetransfer_request::DIRECTION_REQUEST,
             'status_error' => coursetransfer_request::STATUS_ERROR,
             'status_incompleted' => coursetransfer_request::STATUS_INCOMPLETED,
-            'status_downloaded' => coursetransfer_request::STATUS_DOWNLOADED,
             'cutoff' => $cutoff_time,
         ];
 

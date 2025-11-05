@@ -31,10 +31,10 @@
  * @author     3IPUNT <contacte@tresipunt.com>
  * @license    http://www.gnu.org/copyleft/gpl.html GNU GPL v3 or later
  */
-defined('MOODLE_INTERNAL') || die;
+defined('MOODLE_INTERNAL') || die();
 
-$plugin->version   = 2024110503; // 2024-11-05 - Added all adhoc tasks to cleanup (download, restore, remove, cleanup)
-$plugin->requires  = 2021051703;
+$plugin->version = 2024110506;
+$plugin->requires = 2024100700;
 $plugin->component = 'local_coursetransfer';
-$plugin->release   = '1.3.3';
-$plugin->maturity  = MATURITY_ALPHA;
+$plugin->release = '1.3.6';
+$plugin->maturity = MATURITY_STABLE;

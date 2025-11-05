@@ -58,6 +58,16 @@ class restore_course_task extends \core\task\adhoc_task {
     use \core\task\logging_trait;
 
     /**
+     * Maximum number of retry attempts before marking as failed
+     */
+    const MAX_RETRY_ATTEMPTS = 3;
+
+    /**
+     * Base delay in seconds between retry attempts (exponential backoff)
+     */
+    const BASE_RETRY_DELAY = 300; // 5 minutes base delay
+
+    /**
      * Execute.
      *
      * @throws dml_exception
@@ -70,6 +80,23 @@ class restore_course_task extends \core\task\adhoc_task {
 
             $fileid = $this->get_custom_data()->fileid;
             $requestid = $this->get_custom_data()->requestid;
+            
+            // Get retry attempt number (0 for first attempt)
+            $retryattempt = isset($this->get_custom_data()->retry_attempt) ? 
+                $this->get_custom_data()->retry_attempt : 0;
+
+            if ($retryattempt > 0) {
+                $this->log("Retry attempt #{$retryattempt} of " . self::MAX_RETRY_ATTEMPTS);
+                coursetransfer_logger::warning(
+                    $requestid,
+                    coursetransfer_logger::DIRECTION_TARGET,
+                    'RESTORE_RETRY_ATTEMPT',
+                    "Restore retry attempt #{$retryattempt}",
+                    null,
+                    ['attempt' => $retryattempt, 'max_attempts' => self::MAX_RETRY_ATTEMPTS]
+                );
+            }
+            
             $fs = get_file_storage();
 
             $request = coursetransfer_request::get($requestid);
@@ -139,19 +166,36 @@ class restore_course_task extends \core\task\adhoc_task {
                     [
                         'target_course_id' => $request->target_course_id,
                         'file_id' => $fileid,
-                        'file_size' => $file->get_filesize()
+                        'file_size' => $file->get_filesize(),
+                        'retry_attempts' => $retryattempt
                     ]
                 );
                 
+                // Update request status to COMPLETED with specific DB error handling
                 $request->status = coursetransfer_request::STATUS_COMPLETED;
-                coursetransfer_request::insert_or_update($request, $request->id);
-
-                // Notify origin that restore completed successfully so it can safely cleanup backup .mbz file
-                // This prevents race condition where backup is deleted before restore completes
-                // IMPORTANT: This only deletes the .mbz file, NEVER the original course or category
-                if (get_config('local_coursetransfer', 'auto_cleanup_origin_backup')) {
-                    $this->notify_origin_restore_completed($request);
+                try {
+                    coursetransfer_request::insert_or_update($request, $request->id);
+                } catch (\dml_exception $dbException) {
+                    // Database error - log specifically and re-throw
+                    coursetransfer_logger::error(
+                        $requestid,
+                        coursetransfer_logger::DIRECTION_TARGET,
+                        'DATABASE_UPDATE_FAILED',
+                        'Failed to update request status to COMPLETED in database',
+                        $dbException->getCode(),
+                        [
+                            'table' => 'local_coursetransfer_request',
+                            'operation' => 'update_to_completed',
+                            'request_id' => $request->id,
+                            'db_error' => $dbException->getMessage()
+                        ]
+                    );
+                    throw $dbException; // Re-throw to be caught by outer catch
                 }
+
+                // ALWAYS notify origin that restore completed (for logging and status tracking)
+                // This is important even if auto_cleanup is disabled, to ensure proper logging in origin
+                $this->notify_origin_restore_completed($request);
 
                 // Cleanup downloaded backup file if auto cleanup is enabled
                 if (get_config('local_coursetransfer', 'auto_cleanup_target_backup')) {
@@ -173,8 +217,49 @@ class restore_course_task extends \core\task\adhoc_task {
                     coursetransfer_notification::send_restore_course_completed($request->userid, $request->target_course_id);
                     $this->log('Course restore completed - .mbz file will be cleaned up by origin');
                 }
+            } else {
+                // Restore failed - check if we should retry
+                $this->log('Restore in Moodle Failed!');
+                
+                // Check if we can retry
+                if ($retryattempt < self::MAX_RETRY_ATTEMPTS) {
+                    // Schedule retry instead of marking as permanent failure
+                    $this->schedule_retry($requestid, $fileid, $retryattempt);
+                    $this->log("Restore failed, retry #{" . ($retryattempt + 1) . "} scheduled");
+                    
+                    coursetransfer_logger::warning(
+                        $requestid,
+                        coursetransfer_logger::DIRECTION_TARGET,
+                        'RESTORE_RETRY_SCHEDULED',
+                        "Restore failed, scheduling retry attempt #" . ($retryattempt + 1),
+                        null,
+                        [
+                            'current_attempt' => $retryattempt,
+                            'next_attempt' => $retryattempt + 1,
+                            'max_attempts' => self::MAX_RETRY_ATTEMPTS
+                        ]
+                    );
+                    
+                    // Don't mark as ERROR yet, keep in DOWNLOADED state for retry
+                    return; // Exit gracefully, retry will be executed later
                 } else {
-                $this->log('Restore in Moodle is Failed!');
+                    // Max retries reached, mark as permanent failure
+                    $this->log('Restore failed after ' . self::MAX_RETRY_ATTEMPTS . ' attempts');
+                    
+                    coursetransfer_logger::error(
+                        $requestid,
+                        coursetransfer_logger::DIRECTION_TARGET,
+                        coursetransfer_logger::ACTION_RESTORE_FAILED,
+                        'Restore failed after ' . self::MAX_RETRY_ATTEMPTS . ' retry attempts',
+                        '11101',
+                        ['retry_attempts' => $retryattempt, 'file_id' => $fileid]
+                    );
+                    
+                    $request->status = coursetransfer_request::STATUS_ERROR;
+                    $request->error_code = '11101';
+                    $request->error_message = 'Restore failed after ' . self::MAX_RETRY_ATTEMPTS . ' attempts';
+                    coursetransfer_request::insert_or_update($request, $request->id);
+                }
             }
             $this->log_finish("Restore Backup Course Remote Finishing...");
         }
@@ -189,6 +274,16 @@ class restore_course_task extends \core\task\adhoc_task {
                     $this->get_custom_data()->requestid : null;
             }
             
+            if (!isset($fileid)) {
+                $fileid = isset($this->get_custom_data()->fileid) ? 
+                    $this->get_custom_data()->fileid : null;
+            }
+            
+            if (!isset($retryattempt)) {
+                $retryattempt = isset($this->get_custom_data()->retry_attempt) ? 
+                    $this->get_custom_data()->retry_attempt : 0;
+            }
+            
             // Try to get request object if not set
             if (!isset($request) && $requestid) {
                 try {
@@ -198,15 +293,37 @@ class restore_course_task extends \core\task\adhoc_task {
                 }
             }
             
-            // Log exception error
+            // Check if we should retry on exception
+            if ($retryattempt < self::MAX_RETRY_ATTEMPTS && $requestid && $fileid) {
+                // Schedule retry for transient errors
+                $this->log("Exception occurred, scheduling retry #{" . ($retryattempt + 1) . "}");
+                
+                coursetransfer_logger::warning(
+                    $requestid,
+                    coursetransfer_logger::DIRECTION_TARGET,
+                    'RESTORE_EXCEPTION_RETRY_SCHEDULED',
+                    "Exception during restore, scheduling retry: " . $e->getMessage(),
+                    null,
+                    [
+                        'exception' => get_class($e),
+                        'current_attempt' => $retryattempt,
+                        'next_attempt' => $retryattempt + 1
+                    ]
+                );
+                
+                $this->schedule_retry($requestid, $fileid, $retryattempt);
+                return; // Exit gracefully, retry will be executed
+            }
+            
+            // Max retries reached or missing required data - mark as permanent failure
             if ($requestid) {
                 coursetransfer_logger::error(
                     $requestid,
                     coursetransfer_logger::DIRECTION_TARGET,
                     coursetransfer_logger::ACTION_RESTORE_FAILED,
-                    'Critical exception during restore: ' . $e->getMessage(),
+                    'Critical exception during restore after ' . $retryattempt . ' attempts: ' . $e->getMessage(),
                     $e->getCode() ?: '11000',
-                    ['exception' => get_class($e), 'trace' => $e->getTraceAsString()]
+                    ['exception' => get_class($e), 'retry_attempts' => $retryattempt]
                 );
             }
             
@@ -214,7 +331,7 @@ class restore_course_task extends \core\task\adhoc_task {
             if (isset($request) && $request) {
                 $request->status = coursetransfer_request::STATUS_ERROR;
                 $request->error_code = $e->getCode() ?: '11000';
-                $request->error_message = 'Restore failed: ' . $e->getMessage();
+                $request->error_message = 'Restore failed after ' . $retryattempt . ' attempts: ' . $e->getMessage();
                 
                 try {
                     coursetransfer_request::insert_or_update($request, $request->id);
@@ -236,10 +353,33 @@ class restore_course_task extends \core\task\adhoc_task {
             if ($file && $file->get_filename() !== '.') {
                 $filename = $file->get_filename();
                 $filesize = $file->get_filesize();
-                $file->delete();
-                $this->log("Deleted downloaded backup file: {$filename}");
                 
-                // Log the .mbz deletion in target
+                // Try to delete file with specific file exception handling
+                try {
+                    $file->delete();
+                    $this->log("Deleted downloaded backup file: {$filename}");
+                } catch (\file_exception $fileException) {
+                    // File system error - log but don't fail the whole process
+                    $requestid = $this->get_custom_data()->requestid ?? null;
+                    if ($requestid) {
+                        coursetransfer_logger::warning(
+                            $requestid,
+                            coursetransfer_logger::DIRECTION_TARGET,
+                            'FILE_DELETE_FAILED',
+                            'Failed to delete backup file (not critical): ' . $fileException->getMessage(),
+                            null,
+                            [
+                                'filename' => $filename,
+                                'file_id' => $file->get_id(),
+                                'file_size' => $filesize
+                            ]
+                        );
+                    }
+                    $this->log("Warning: Could not delete file {$filename}: " . $fileException->getMessage());
+                    return; // Exit method, don't log success
+                }
+                
+                // Log the .mbz deletion in target (only if delete succeeded)
                 $requestid = $this->get_custom_data()->requestid ?? null;
                 if ($requestid) {
                     coursetransfer_logger::info(
@@ -263,8 +403,9 @@ class restore_course_task extends \core\task\adhoc_task {
     }
 
     /**
-     * Notify origin site that restore completed successfully and backup can be safely deleted
-     * This prevents race condition where backup is deleted before restore finishes
+     * Notify origin site that restore completed successfully
+     * This is called ALWAYS to ensure proper logging in origin, regardless of auto_cleanup setting.
+     * The actual file deletion only happens if auto_cleanup_origin_backup is enabled in origin.
      *
      * @param stdClass $request
      * @return void
@@ -279,23 +420,30 @@ class restore_course_task extends \core\task\adhoc_task {
                 $response = $api_request->target_backup_course_downloaded($request->id, $user);
                 
                 if ($response->success) {
-                    $this->log('Successfully notified origin to cleanup backup file after restore completion');
+                    if (isset($response->data->cleaned) && $response->data->cleaned) {
+                        $this->log('Successfully notified origin - backup file was cleaned up');
+                    } else {
+                        $this->log('Successfully notified origin - backup file kept (auto_cleanup disabled)');
+                    }
                     
                     coursetransfer_logger::info(
                         $request->id,
                         coursetransfer_logger::DIRECTION_TARGET,
-                        'ORIGIN_CLEANUP_NOTIFIED',
-                        'Notified origin server that restore completed and backup can be safely deleted',
-                        ['request_id' => $request->id]
+                        'ORIGIN_RESTORE_COMPLETED_NOTIFIED',
+                        'Notified origin server that restore completed successfully',
+                        [
+                            'request_id' => $request->id,
+                            'backup_cleaned' => isset($response->data->cleaned) ? $response->data->cleaned : false
+                        ]
                     );
                 } else {
-                    $this->log('Failed to notify origin for cleanup: ' . json_encode($response->errors));
+                    $this->log('Failed to notify origin: ' . json_encode($response->errors));
                     
                     coursetransfer_logger::warning(
                         $request->id,
                         coursetransfer_logger::DIRECTION_TARGET,
-                        'ORIGIN_CLEANUP_NOTIFICATION_FAILED',
-                        'Failed to notify origin for cleanup, but restore was successful',
+                        'ORIGIN_NOTIFICATION_FAILED',
+                        'Failed to notify origin that restore completed (will be logged by scheduled cleanup)',
                         null,
                         ['errors' => $response->errors]
                     );
@@ -303,17 +451,50 @@ class restore_course_task extends \core\task\adhoc_task {
             }
         } catch (\Exception $e) {
             // Don't fail the restore process if notification fails
-            // The backup will be cleaned up by the scheduled cleanup task after 24h anyway
-            $this->log('Error notifying origin for cleanup: ' . $e->getMessage());
+            // The backup will be cleaned up by the scheduled cleanup task after 48h anyway
+            $this->log('Error notifying origin: ' . $e->getMessage());
             
             coursetransfer_logger::warning(
                 $request->id,
                 coursetransfer_logger::DIRECTION_TARGET,
-                'ORIGIN_CLEANUP_NOTIFICATION_ERROR',
-                'Exception when notifying origin for cleanup: ' . $e->getMessage(),
+                'ORIGIN_NOTIFICATION_ERROR',
+                'Exception when notifying origin: ' . $e->getMessage(),
                 null,
                 ['exception' => get_class($e)]
             );
         }
     }
+
+    /**
+     * Schedule a retry of this restore task
+     * Uses exponential backoff: 5min, 10min, 20min for attempts 1, 2, 3
+     *
+     * @param int $requestid
+     * @param int $fileid
+     * @param int $currentattempt
+     * @return void
+     */
+    private function schedule_retry($requestid, $fileid, $currentattempt) {
+        $nextattempt = $currentattempt + 1;
+        
+        // Exponential backoff: 5min, 10min, 20min
+        $delay = self::BASE_RETRY_DELAY * pow(2, $currentattempt);
+        
+        $retrytask = new restore_course_task();
+        $retrytask->set_blocking(false);
+        $retrytask->set_custom_data([
+            'requestid' => $requestid,
+            'fileid' => $fileid,
+            'retry_attempt' => $nextattempt,
+        ]);
+        
+        // Schedule task to run after delay
+        $retrytask->set_next_run_time(time() + $delay);
+        
+        \core\task\manager::queue_adhoc_task($retrytask);
+        
+        $this->log("Retry #{$nextattempt} scheduled to run in {$delay} seconds (" . 
+            gmdate('i\m s\s', $delay) . ")");
+    }
 }
+

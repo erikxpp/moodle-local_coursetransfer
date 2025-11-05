@@ -198,8 +198,27 @@ class download_file_course_task extends \core\task\adhoc_task {
                 ]
             );
             
+            // Update request status with specific DB error handling
             $request->status = coursetransfer_request::STATUS_DOWNLOADED;
-            coursetransfer_request::insert_or_update($request, $request->id);
+            try {
+                coursetransfer_request::insert_or_update($request, $request->id);
+            } catch (\dml_exception $dbException) {
+                // Database error - log specifically and re-throw
+                coursetransfer_logger::error(
+                    $requestid,
+                    coursetransfer_logger::DIRECTION_TARGET,
+                    'DATABASE_UPDATE_FAILED',
+                    'Failed to update request status to DOWNLOADED in database',
+                    $dbException->getCode(),
+                    [
+                        'table' => 'local_coursetransfer_request',
+                        'operation' => 'update_to_downloaded',
+                        'request_id' => $request->id,
+                        'db_error' => $dbException->getMessage()
+                    ]
+                );
+                throw $dbException; // Re-throw to be caught by outer catch
+            }
             
             // NOTE: We do NOT notify origin here anymore to avoid race condition.
             // The notification will be sent AFTER successful restore in restore_course_task.php
