@@ -249,31 +249,54 @@ class target_course_callback_external extends external_api {
                             false // Don't include directories
                         );
                         
+                        $filefound = false;
+                        $deletedfilename = '';
+                        $deletedfilesize = 0;
+                        
                         foreach ($files as $file) {
                             $filename = $file->get_filename();
                             $filesize = $file->get_filesize();
                             // Match pattern: backup_{timestamp}_{requestid}.mbz
                             if (preg_match('/^backup_\d+_' . $requestid . '\.mbz$/', $filename)) {
+                                $filefound = true;
+                                $deletedfilename = $filename;
+                                $deletedfilesize = $filesize;
+                                
                                 $file->delete();
                                 $data->cleaned = true;
                                 mtrace("Cleaned origin backup file '{$filename}' for request {$requestid}");
                                 
-                                // Log the .mbz deletion in origin
-                                \local_coursetransfer\coursetransfer_logger::info(
-                                    $requestid,
-                                    \local_coursetransfer\coursetransfer_logger::DIRECTION_ORIGIN,
-                                    'ORIGIN_BACKUP_DELETED',
-                                    'Origin backup file deleted after successful restore on target',
-                                    [
-                                        'filename' => $filename,
-                                        'file_size' => $filesize,
-                                        'file_size_mb' => round($filesize / 1048576, 2),
-                                        'request_id' => $requestid
-                                    ]
-                                );
-                                
                                 break; // Only delete the first matching file
                             }
+                        }
+                        
+                        // Always log what happened (file deleted or not found)
+                        if ($filefound) {
+                            \local_coursetransfer\coursetransfer_logger::info(
+                                $requestid,
+                                \local_coursetransfer\coursetransfer_logger::DIRECTION_ORIGIN,
+                                'ORIGIN_BACKUP_DELETED',
+                                'Origin backup file deleted after successful restore on target',
+                                [
+                                    'filename' => $deletedfilename,
+                                    'file_size' => $deletedfilesize,
+                                    'file_size_mb' => round($deletedfilesize / 1048576, 2),
+                                    'request_id' => $requestid
+                                ]
+                            );
+                        } else {
+                            \local_coursetransfer\coursetransfer_logger::warning(
+                                $requestid,
+                                \local_coursetransfer\coursetransfer_logger::DIRECTION_ORIGIN,
+                                'ORIGIN_BACKUP_NOT_FOUND',
+                                'Origin backup file not found when trying to delete (may have been already cleaned)',
+                                null,
+                                [
+                                    'request_id' => $requestid,
+                                    'context_id' => $context->id,
+                                    'total_files_in_area' => count($files)
+                                ]
+                            );
                         }
                     }
                     
