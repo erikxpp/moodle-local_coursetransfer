@@ -290,7 +290,7 @@ class origin_course_external extends external_api {
                     [
                         'code' => new external_value(PARAM_INT, 'Code'),
                         'msg' => new external_value(PARAM_TEXT, 'Message'),
-                    ], PARAM_TEXT, 'Errors'
+                    ], 'Errors'
                 )),
                 'data' => new external_single_structure(
                     [

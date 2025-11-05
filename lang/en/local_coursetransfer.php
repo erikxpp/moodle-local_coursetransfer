@@ -294,6 +294,7 @@ $string['coursetransfer:target_restore_enrol_remove'] = "Delete current roles an
 $string['coursetransfer:target_restore_groups_remove'] = "Delete current groups and groupings";
 $string['coursetransfer:target_restore_content_remove'] = "Delete the contents of this course and then restore";
 $string['coursetransfer:target_restore_merge'] = "Merge the backup course into this course";
+$string['coursetransfer:view_logs'] = "View course transfer logs";
 $string['forbidden'] = "Forbidden";
 $string['you_have_not_permission'] = "You do not have permissions to view this page";
 $string['createnewcategory'] = "In new category...";
