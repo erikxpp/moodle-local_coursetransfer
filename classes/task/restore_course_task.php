@@ -235,8 +235,26 @@ class restore_course_task extends \core\task\adhoc_task {
         try {
             if ($file && $file->get_filename() !== '.') {
                 $filename = $file->get_filename();
+                $filesize = $file->get_filesize();
                 $file->delete();
                 $this->log("Deleted downloaded backup file: {$filename}");
+                
+                // Log the .mbz deletion in target
+                $requestid = $this->get_custom_data()->requestid ?? null;
+                if ($requestid) {
+                    coursetransfer_logger::info(
+                        $requestid,
+                        coursetransfer_logger::DIRECTION_TARGET,
+                        'TARGET_BACKUP_DELETED',
+                        'Target downloaded backup file deleted after successful restore',
+                        [
+                            'filename' => $filename,
+                            'file_size' => $filesize,
+                            'file_size_mb' => round($filesize / 1048576, 2),
+                            'request_id' => $requestid
+                        ]
+                    );
+                }
             }
         } catch (\Exception $e) {
             // Don't fail the restoration if cleanup fails

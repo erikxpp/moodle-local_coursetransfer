@@ -251,11 +251,27 @@ class target_course_callback_external extends external_api {
                         
                         foreach ($files as $file) {
                             $filename = $file->get_filename();
+                            $filesize = $file->get_filesize();
                             // Match pattern: backup_{timestamp}_{requestid}.mbz
                             if (preg_match('/^backup_\d+_' . $requestid . '\.mbz$/', $filename)) {
                                 $file->delete();
                                 $data->cleaned = true;
                                 mtrace("Cleaned origin backup file '{$filename}' for request {$requestid}");
+                                
+                                // Log the .mbz deletion in origin
+                                \local_coursetransfer\coursetransfer_logger::info(
+                                    $requestid,
+                                    \local_coursetransfer\coursetransfer_logger::DIRECTION_ORIGIN,
+                                    'ORIGIN_BACKUP_DELETED',
+                                    'Origin backup file deleted after successful restore on target',
+                                    [
+                                        'filename' => $filename,
+                                        'file_size' => $filesize,
+                                        'file_size_mb' => round($filesize / 1048576, 2),
+                                        'request_id' => $requestid
+                                    ]
+                                );
+                                
                                 break; // Only delete the first matching file
                             }
                         }
