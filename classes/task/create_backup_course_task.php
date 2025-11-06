@@ -255,17 +255,24 @@ class create_backup_course_task extends \core\task\asynchronous_backup_task {
                     }
                     $requestorigin->status = coursetransfer_request::STATUS_COMPLETED;
                 } else {
+                    // CRITICAL FIX: Mark request as ERROR when file creation fails
                     mtrace('Course Transfer Backup - Creating File ERROR');
+                    
+                    $requestorigin->status = coursetransfer_request::STATUS_ERROR;
+                    $requestorigin->error_code = 10201;
+                    $requestorigin->error_message = 'Failed to create backup file: ' . $resfileurl->error;
                     
                     // Log backup file creation error
                     coursetransfer_logger::error(
                         $requestoriginid,
                         coursetransfer_logger::DIRECTION_ORIGIN,
                         coursetransfer_logger::ACTION_BACKUP_FAILED,
-                        'Failed to create backup file: ' . $resfileurl->error,
-                        $resfileurl->error
+                        $requestorigin->error_message,
+                        $requestorigin->error_code,
+                        ['raw_error' => $resfileurl->error]
                     );
                     
+                    // Notify target about the error
                     if (!$istest) {
                         $res = $request->target_backup_course_error(
                                 $user, $requestid, $resfileurl->error, [], $resfileurl->filesize);
