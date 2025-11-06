@@ -60,6 +60,12 @@ class create_backup_course_task extends \core\task\asynchronous_backup_task {
     /** @var stdClass Site (host & token) */
     public stdClass $site;
 
+    /** Maximum attempts to create backup file (handles transient failures) */
+    const MAX_FILE_CREATION_ATTEMPTS = 3;
+    
+    /** Retry delays in seconds: [0, 10, 30] = immediate, 10s, 30s */
+    const RETRY_DELAYS = [0, 10, 30];
+
     /**
      * Execute the task.
      *
@@ -187,8 +193,69 @@ class create_backup_course_task extends \core\task\asynchronous_backup_task {
             $requestorigin = coursetransfer_request::get($requestoriginid);
             if ($bc->get_status() === \backup::STATUS_FINISHED_OK) {
                 mtrace('Course Transfer Backup - Creating File ... ');
-                $resfileurl = coursetransfer::create_backupfile_url(
-                        $bc->get_courseid(), $result['backup_destination'], $requestorigin->id);
+                
+                // Implement retry strategy for file creation (handles transient failures like file flush delays)
+                $resfileurl = null;
+                $backupfile = $result['backup_destination'];
+                
+                for ($attempt = 0; $attempt < self::MAX_FILE_CREATION_ATTEMPTS; $attempt++) {
+                    // Apply delay before retry attempts (not on first attempt)
+                    if ($attempt > 0) {
+                        $delay = self::RETRY_DELAYS[$attempt];
+                        mtrace("Course Transfer Backup - Retry attempt {$attempt}/" . 
+                            self::MAX_FILE_CREATION_ATTEMPTS . " after {$delay}s delay...");
+                        sleep($delay);
+                        
+                        // Verify temporary backup file still exists before retrying
+                        if (!$backupfile || !$backupfile->get_filesize()) {
+                            mtrace('Temporary backup file no longer accessible, cannot retry');
+                            coursetransfer_logger::warning(
+                                $requestoriginid,
+                                coursetransfer_logger::DIRECTION_ORIGIN,
+                                'FILE_RETRY_ABORTED',
+                                'Temporary backup file disappeared, aborting retry',
+                                null,
+                                ['attempt' => $attempt, 'max_attempts' => self::MAX_FILE_CREATION_ATTEMPTS]
+                            );
+                            break;
+                        }
+                    }
+                    
+                    // Attempt to create backup file URL
+                    $resfileurl = coursetransfer::create_backupfile_url(
+                        $bc->get_courseid(), $backupfile, $requestorigin->id);
+                    
+                    if ($resfileurl->success) {
+                        if ($attempt > 0) {
+                            mtrace("Course Transfer Backup - File creation succeeded on attempt " . ($attempt + 1));
+                            coursetransfer_logger::info(
+                                $requestoriginid,
+                                coursetransfer_logger::DIRECTION_ORIGIN,
+                                'FILE_CREATION_RETRY_SUCCESS',
+                                "File creation succeeded after {$attempt} retry attempts",
+                                ['attempt' => $attempt + 1, 'total_attempts' => self::MAX_FILE_CREATION_ATTEMPTS]
+                            );
+                        }
+                        break; // Success - exit retry loop
+                    }
+                    
+                    // Log failed attempt
+                    mtrace("Course Transfer Backup - Attempt " . ($attempt + 1) . " failed: " . $resfileurl->error);
+                    coursetransfer_logger::warning(
+                        $requestoriginid,
+                        coursetransfer_logger::DIRECTION_ORIGIN,
+                        'FILE_CREATION_ATTEMPT_FAILED',
+                        "File creation attempt failed: {$resfileurl->error}",
+                        null,
+                        [
+                            'attempt' => $attempt + 1,
+                            'max_attempts' => self::MAX_FILE_CREATION_ATTEMPTS,
+                            'error' => $resfileurl->error
+                        ]
+                    );
+                }
+                
+                // Check final result after all retry attempts
                 if ($resfileurl->success) {
                     mtrace('Course Transfer Backup - Creating File OK');
                     

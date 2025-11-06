@@ -33,8 +33,8 @@
  */
 defined('MOODLE_INTERNAL') || die();
 
-$plugin->version = 2024110510;
+$plugin->version = 2024110511;
 $plugin->requires = 2024100700;
 $plugin->component = 'local_coursetransfer';
-$plugin->release = '1.3.10';
+$plugin->release = '1.3.11';
 $plugin->maturity = MATURITY_STABLE;
