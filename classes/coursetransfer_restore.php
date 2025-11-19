@@ -651,11 +651,14 @@ class coursetransfer_restore {
                     continue;
                 }
 
-                // Check if user exists in destination.
-                $existinguser = $DB->get_record('user', [
+                // Check if user exists in destination (only local users, mnethostid=1).
+                $existingusers = $DB->get_records('user', [
                     $matchfield => $matchvalue,
-                    'deleted' => 0
-                ], 'id, username, firstname, lastname');
+                    'deleted' => 0,
+                    'mnethostid' => 1
+                ], 'id ASC', 'id, username, firstname, lastname', 0, 1);
+                
+                $existinguser = !empty($existingusers) ? reset($existingusers) : null;
 
                 if ($existinguser) {
                     // CRITICAL: Remove this user from the backup XML
@@ -871,11 +874,14 @@ class coursetransfer_restore {
                     continue;
                 }
 
-                // Search for existing user in destination
-                $existinguser = $DB->get_record('user', [
+                // Search for existing user in destination (only local users, mnethostid=1)
+                $existingusers = $DB->get_records('user', [
                     $matchfield => $matchvalue,
-                    'deleted' => 0
-                ], 'id, username, firstname, lastname');
+                    'deleted' => 0,
+                    'mnethostid' => 1
+                ], 'id ASC', 'id, username, firstname, lastname', 0, 1);
+                
+                $existinguser = !empty($existingusers) ? reset($existingusers) : null;
 
                 if ($existinguser) {
                     // CRITICAL: Update the mapping to point to existing user
@@ -1025,11 +1031,14 @@ class coursetransfer_restore {
                     continue;
                 }
 
-                // Search for existing user in destination by match field.
-                $existinguser = $DB->get_record('user', [
+                // Search for existing user in destination by match field (only local users, mnethostid=1).
+                $existingusers = $DB->get_records('user', [
                     $matchfield => $matchvalue,
-                    'deleted' => 0
-                ], 'id, username, email, firstname, lastname');
+                    'deleted' => 0,
+                    'mnethostid' => 1
+                ], 'id ASC', 'id, username, email, firstname, lastname', 0, 1);
+                
+                $existinguser = !empty($existingusers) ? reset($existingusers) : null;
 
                 if ($existinguser) {
                     // CRITICAL: Map backup user to existing destination user.
