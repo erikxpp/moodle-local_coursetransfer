@@ -183,62 +183,6 @@ class coursetransfer_restore {
                     'course_shortname' => $shortname,
             ];
 
-            // CRITICAL FIX: Read course format from backup and apply it to destination course
-            // BEFORE creating restore controller. This ensures format-specific configurations
-            // (like colors, custom settings) are properly restored from the backup.
-            try {
-                $moodlefile = $backuptempdir . '/' . $filepath . '/moodle_backup.xml';
-                if (file_exists($moodlefile)) {
-                    $xml = simplexml_load_file($moodlefile);
-                    if ($xml && isset($xml->information->original_course_format)) {
-                        $backup_format = (string)$xml->information->original_course_format;
-                        
-                        // Get current course format
-                        $current_course = $DB->get_record('course', ['id' => $courseid], 'id,format');
-                        
-                        if ($current_course && $current_course->format !== $backup_format) {
-                            coursetransfer_logger::info(
-                                $request->id,
-                                coursetransfer_logger::DIRECTION_TARGET,
-                                'CHANGING_COURSE_FORMAT',
-                                "Changing destination course format to match backup. Current: '{$current_course->format}', Backup format: '{$backup_format}'",
-                                ['course_id' => $courseid, 'old_format' => $current_course->format, 'new_format' => $backup_format]
-                            );
-                            
-                            // Change course format to match the backup
-                            $current_course->format = $backup_format;
-                            $DB->update_record('course', $current_course);
-                            
-                            // Clear course cache to ensure format change is recognized
-                            rebuild_course_cache($courseid, true);
-                            
-                            coursetransfer_logger::info(
-                                $request->id,
-                                coursetransfer_logger::DIRECTION_TARGET,
-                                'COURSE_FORMAT_CHANGED',
-                                "Course format changed successfully. Now restore will use correct format plugin.",
-                                ['course_id' => $courseid, 'format' => $backup_format]
-                            );
-                        } else if ($current_course) {
-                            coursetransfer_logger::info(
-                                $request->id,
-                                coursetransfer_logger::DIRECTION_TARGET,
-                                'COURSE_FORMAT_MATCH',
-                                "Course format already matches backup format: '{$backup_format}'",
-                                ['course_id' => $courseid, 'format' => $backup_format]
-                            );
-                        }
-                    }
-                }
-            } catch (\Exception $e) {
-                coursetransfer_logger::info(
-                    $request->id,
-                    coursetransfer_logger::DIRECTION_TARGET,
-                    'FORMAT_CHECK_ERROR',
-                    "Could not read course format from backup: " . $e->getMessage()
-                );
-            }
-
             // DON'T convert TARGET_NEW_COURSE to TARGET_EXISTING_DELETING
             // Let Moodle use the target as configured in the request
             // The fullname/shortname from restoreoptions will override any duplicates
