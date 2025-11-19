@@ -77,9 +77,17 @@ define([
                     let seltarget = '[data-action="target"][data-courseid="' + courseid + '"] option[value="' + targetid + '"]';
                     $(seltarget).prop('selected', true);
                 });
-                this.data.configuration.forEach(function(config) {
-                    $('#' + config.name).prop('checked', config.selected);
-                });
+                if (this.data.configuration && this.data.configuration.length > 0) {
+                    this.data.configuration.forEach(function(config) {
+                        $('#' + config.name).prop('checked', config.selected);
+                    });
+                } else {
+                    // Si no hay configuración previa, marcar checkbox de usuarios por defecto
+                    $('#origin_users').prop('checked', true);
+                }
+            } else {
+                // Si no hay data, marcar checkbox de usuarios por defecto
+                $('#origin_users').prop('checked', true);
             }
             this.node.find(ACTIONS.NEXT).on('click', this.clickNext.bind(this));
             this.node.find('#origin_schedule').on('click', this.clickSchedule.bind(this));

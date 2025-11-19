@@ -183,7 +183,13 @@ class restore_category_external extends external_api {
                                 'id' => new external_value(PARAM_INT, 'Course ID'),
                             ]
                     )),
-                    'nextruntime' => new external_value(PARAM_INT, 'Next Time Run Timestamp'),
+                    'configuration' => new external_single_structure(
+                        [
+                            'origin_enrol_users' => new external_value(PARAM_BOOL, 'Origin Enrol Users'),
+                            'origin_remove_category' => new external_value(PARAM_BOOL, 'Origin Remove Category'),
+                            'origin_schedule_datetime' => new external_value(PARAM_INT, 'Origin Schedule Datetime'),
+                        ]
+                    ),
                 ]
         );
     }
@@ -195,13 +201,13 @@ class restore_category_external extends external_api {
      * @param int $categoryid
      * @param int $targetid
      * @param array $courses
-     * @param int $nextruntime
+     * @param array $configuration
      * @return array
      * @throws invalid_parameter_exception
      * @throws moodle_exception
      */
     public static function new_origin_restore_category_step4(
-            int $siteurl, int $categoryid, int $targetid, array $courses, int $nextruntime): array {
+            int $siteurl, int $categoryid, int $targetid, array $courses, array $configuration): array {
 
         global $USER;
 
@@ -211,7 +217,7 @@ class restore_category_external extends external_api {
                 'categoryid' => $categoryid,
                 'targetid' => $targetid,
                 'courses' => $courses,
-                'nextruntime' => $nextruntime,
+                'configuration' => $configuration,
             ]
         );
 
@@ -219,7 +225,7 @@ class restore_category_external extends external_api {
         $categoryid = $params['categoryid'];
         $targetid = $params['targetid'];
         $courses = $params['courses'];
-        $nextruntime = $params['nextruntime'];
+        $configuration = $params['configuration'];
 
         $success = false;
         $errors = [];
@@ -229,13 +235,12 @@ class restore_category_external extends external_api {
 
         try {
             $site = coursetransfer::get_site_by_position($siteurl);
-            $nextruntime = $nextruntime / 1000;
-            $date = new DateTime();
-            $date->setTimestamp(intval($nextruntime));
-            $configuration = new configuration_category(
+            $nextruntime = $configuration['origin_schedule_datetime'] / 1000;
+            $configobject = new configuration_category(
                     \backup::TARGET_NEW_COURSE,
-                    false, false, 0, 0, $nextruntime);
-            $res = coursetransfer::restore_category($USER, $site, $targetid, $categoryid, $configuration, $courses);
+                    false, false, $configuration['origin_enrol_users'],
+                    $configuration['origin_remove_category'], $nextruntime);
+            $res = coursetransfer::restore_category($USER, $site, $targetid, $categoryid, $configobject, $courses);
             $errors = array_merge($errors, $res['errors']);
             $success = $res['success'];
         } catch (moodle_exception $e) {

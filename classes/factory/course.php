@@ -75,6 +75,12 @@ class course {
         $datacourse->visible = 1;
         $datacourse->summary = $summary;
         $datacourse->summaryformat = FORMAT_PLAIN;
+        
+        // CRITICAL: Disable automatic news forum creation
+        // When creating temporary courses for restore, we don't want Moodle to add
+        // a default "Avisos" forum. The restore process will add all forums from backup.
+        $datacourse->newsitems = 0;
+        
         try {
             $res = create_course($datacourse);
             return $res->id;

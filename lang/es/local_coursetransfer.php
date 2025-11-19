@@ -339,7 +339,7 @@ $string['not_course_found'] = 'No se ha encontrado ningún curso...';
 $string['backup_cleanup_settings'] = 'Configuración de limpieza de archivos de respaldo';
 $string['backup_cleanup_settings_desc'] = 'Configuración para la limpieza automática de archivos MBZ de respaldo después de transferir cursos';
 $string['auto_cleanup_origin_backup'] = 'Limpiar respaldo en origen automáticamente';
-$string['auto_cleanup_origin_backup_desc'] = 'Si está activo, el archivo MBZ del curso de origen se eliminará automáticamente después de que el destino lo descargue con éxito. Esto ahorra espacio en disco en el servidor origen.';
+$string['auto_cleanup_origin_backup_desc'] = 'Si está activo, el archivo MBZ del curso de origen se eliminará automáticamente después de que el destino complete la restauración exitosamente y notifique al origen. Esto ahorra espacio en disco en el servidor origen.';
 $string['auto_cleanup_target_backup'] = 'Limpiar respaldo en destino automáticamente';
 $string['auto_cleanup_target_backup_desc'] = 'Si está activo, el archivo MBZ descargado en el destino se eliminará automáticamente después de que la restauración del curso se complete con éxito. Esto ahorra espacio en disco en el servidor destino.';
 $string['backup_retention_hours'] = 'Horas de retención de respaldos';
@@ -411,4 +411,50 @@ $string['log_retention_settings'] = 'Configuración de Retención de Logs';
 $string['log_retention_settings_desc'] = 'Configure cuánto tiempo se deben mantener los registros de logs antes de ser eliminados automáticamente';
 $string['log_retention_days'] = 'Días de retención de logs';
 $string['log_retention_days_desc'] = 'Número de días que se mantendrán los registros de logs antes de ser eliminados automáticamente. Los logs más antiguos serán eliminados por la tarea programada. Valor predeterminado: 90 días.';
+
+// Retry request functionality
+$string['retry_request'] = 'Reprocesar Solicitud';
+$string['retry_request_help'] = 'Crear una nueva solicitud con los mismos parámetros que esta solicitud fallida';
+$string['retry_request_description'] = 'Esta acción creará una nueva solicitud de transferencia con los mismos parámetros de la solicitud fallida. Se limpiarán automáticamente los archivos huérfanos y tareas fallidas antes de iniciar el nuevo proceso.';
+$string['retry_request_confirm_title'] = '¿Reprocesar solicitud fallida?';
+$string['retry_request_confirm_message'] = 'Se creará una nueva solicitud de transferencia con los mismos parámetros. Los archivos y tareas de la solicitud anterior serán limpiados automáticamente. ¿Desea continuar?';
+$string['retry_request_success'] = 'Nueva solicitud creada exitosamente. Redirigiendo a los detalles...';
+$string['retry_request_failed'] = 'Error al crear la nueva solicitud';
+$string['onlyerrorrequestscanberetried'] = 'Solo se pueden reprocesar solicitudes que estén en estado de error';
+$string['onlycourserequestscanberetried'] = 'Solo se pueden reprocesar solicitudes de tipo curso (no categorías ni eliminaciones)';
+$string['processing'] = 'Procesando...';
+$string['retry'] = 'Reprocesar';
+
+// Logs detail page strings
+$string['request_logs_detail'] = 'Detalle de Logs de Transferencia';
+$string['request_details'] = 'Detalles de la Solicitud';
+$string['request_id'] = 'ID Petición';
+$string['direction'] = 'Dirección';
+$string['request'] = 'Petición';
+$string['response'] = 'Respuesta';
+$string['status'] = 'Estado';
+$string['course'] = 'Curso';
+$string['origin_course_id'] = 'ID del curso de origen';
+$string['target_course_id'] = 'ID Curso Destino';
+$string['site_url'] = 'URL del Sitio';
+$string['created'] = 'Creado';
+$string['modified'] = 'Modificado';
+$string['error'] = 'Error';
+$string['warning'] = 'Advertencia';
+$string['request_stuck'] = 'Esta solicitud parece estar atascada. No hay tareas adhoc pendientes pero el estado sigue en progreso.';
+$string['adhoc_tasks'] = 'Tareas Adhoc Relacionadas';
+$string['task_id'] = 'ID Tarea';
+$string['task_name'] = 'Nombre de Tarea';
+$string['started'] = 'Iniciada';
+$string['next_run'] = 'Próxima Ejecución';
+$string['fail_delay'] = 'Retraso por Fallo';
+$string['actions'] = 'Acciones';
+$string['view_task'] = 'Ver tarea';
+$string['logs_timeline'] = 'Línea de Tiempo de Logs';
+$string['no_logs_found'] = 'No se encontraron logs para esta solicitud';
+$string['origin_logs'] = 'Logs del Origen';
+$string['target_logs'] = 'Logs del Destino';
+$string['back_to_logs'] = 'Volver a Logs';
+$string['requestnotfound'] = 'Solicitud no encontrada';
+
 

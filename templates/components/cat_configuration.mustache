@@ -33,7 +33,7 @@
         {{#has_origin_user_data }}
         <li class="configuration-group">
             <div class="checkbox">
-                <input class="configuration-checkbox" id="origin_enrolusers" type="checkbox">
+                <input class="configuration-checkbox" id="origin_enrol_users" type="checkbox" {{#origin_user_data_checked}}checked{{/origin_user_data_checked}}>
             </div>
             <div class="config-info">
                 <div class="config-title">{{#str}} restore_origin_user_data, local_coursetransfer {{/str}}</div>

@@ -42,6 +42,7 @@ use local_coursetransfer\external\frontend\origin_remove_external;
 use local_coursetransfer\external\frontend\restore_category_external;
 use local_coursetransfer\external\frontend\restore_course_external;
 use local_coursetransfer\external\frontend\restore_external;
+use local_coursetransfer\external\frontend\retry_request_external;
 use local_coursetransfer\external\frontend\search_course;
 use local_coursetransfer\external\frontend\sites_external;
 
@@ -328,6 +329,15 @@ $functions = [
             'loginrequired' => true,
     ],
 
+    'local_coursetransfer_retry_failed_request' => [
+            'classname' => retry_request_external::class,
+            'methodname' => 'retry_failed_request',
+            'description' => 'Retry a failed course transfer request by creating a new one',
+            'type' => 'write',
+            'ajax' => true,
+            'loginrequired' => true,
+    ],
+
 ];
 
 $services = [
@@ -363,6 +373,7 @@ $services = [
             'local_coursetransfer_site_origin_test',
             'local_coursetransfer_site_target_test',
             'local_coursetransfer_dest_search_course_name',
+            'local_coursetransfer_retry_failed_request',
         ],
         'downloadfiles' => 1,
         'restrictedusers' => 1,

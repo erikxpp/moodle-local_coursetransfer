@@ -134,6 +134,7 @@ class origin_restore_cat_step3_page extends origin_restore_step_page {
         $data->destinies = $destinies;
         $data->has_scheduled_time = true;
         $data->has_origin_user_data = coursetransfer::has_origin_user_data($USER);
+        $data->origin_user_data_checked = true; // Por defecto seleccionado para categorías
         $data->can_remove_origin_course = coursetransfer::can_remove_origin_course($USER);
         $data->can_target_restore_merge = coursetransfer::can_target_restore_merge($USER, context_system::instance());
         $data->can_target_restore_content_remove =

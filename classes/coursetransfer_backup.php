@@ -84,6 +84,14 @@ class coursetransfer_backup {
     public static function create_task_backup_course(
             int $courseid, int $userid, stdClass $targetsite, int $requestid, int $requestoriginid,
             array $sections, int $rootusers = 0, int $nextruntime = null, bool $istest = false): bool {
+        
+        // Log backup configuration for debugging user data issues
+        mtrace("=== BACKUP CONFIGURATION DEBUG ===");
+        mtrace("Course ID: {$courseid}");
+        mtrace("Root Users Setting (origin_enrol_users): {$rootusers}");
+        mtrace("Request Origin ID: {$requestoriginid}");
+        mtrace("==================================");
+        
         $bc = new backup_controller(
                 backup::TYPE_1COURSE, $courseid,
                 backup::FORMAT_MOODLE,
@@ -94,6 +102,9 @@ class coursetransfer_backup {
         $bc->set_status(backup::STATUS_AWAITING);
         $bc->get_plan()->get_setting('users')->set_status(base_setting::NOT_LOCKED);
         $bc->get_plan()->get_setting('users')->set_value($rootusers);
+        
+        mtrace("Users setting value after configuration: " . 
+            $bc->get_plan()->get_setting('users')->get_value());
         $bc->get_plan()->get_setting('role_assignments')->set_status(base_setting::NOT_LOCKED);
         $bc->get_plan()->get_setting('role_assignments')->set_value($rootusers);
         $bc->get_plan()->get_setting('comments')->set_status(base_setting::NOT_LOCKED);

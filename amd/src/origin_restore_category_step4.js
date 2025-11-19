@@ -111,6 +111,24 @@ define([
             } else {
                 nextruntime  = 0;
             }
+            
+            // Build configuration object from sessionStorage or defaults
+            let config = {
+                origin_enrol_users: true,  // Default to true
+                origin_remove_category: false,
+                origin_schedule_datetime: nextruntime
+            };
+            
+            if (this.sessiondata.configuration) {
+                this.sessiondata.configuration.forEach(function(configItem) {
+                    if (configItem.name === 'origin_enrol_users') {
+                        config.origin_enrol_users = configItem.selected;
+                    } else if (configItem.name === 'origin_remove_category') {
+                        config.origin_remove_category = configItem.selected;
+                    }
+                });
+            }
+            
             let siteurl = this.site;
             let categoryid = this.restoreid;
             let targetid = this.targetid;
@@ -121,7 +139,7 @@ define([
                     categoryid: categoryid,
                     targetid: targetid,
                     courses: this.sessiondata.category.courses,
-                    nextruntime: nextruntime
+                    configuration: config
                 }
             };
             Ajax.call([request])[0].done(function(response) {

@@ -88,6 +88,7 @@ class logs_course_request_table extends table_sql {
                 'timecreated',
                 'detail',
                 'view_logs',
+                'retry',
         ]);
 
         $this->define_headers([
@@ -105,6 +106,7 @@ class logs_course_request_table extends table_sql {
                 get_string('timecreated', 'local_coursetransfer'),
                 get_string('detail', 'local_coursetransfer'),
                 get_string('view_logs', 'local_coursetransfer'),
+                get_string('retry_request', 'local_coursetransfer'),
         ]);
 
         $this->sortable(false);
@@ -320,4 +322,30 @@ class logs_course_request_table extends table_sql {
                 get_string('view_logs', 'local_coursetransfer') . '">' .
                 '<i class="fa fa-search"></i> ' . get_string('view_logs', 'local_coursetransfer') . '</a>';
     }
+
+    /**
+     * Col Retry
+     *
+     * @param stdClass $row Full data of the current row.
+     * @return string
+     * @throws coding_exception
+     */
+    public function col_retry(stdClass $row): string {
+        global $PAGE;
+
+        // Solo mostrar botón de reintentar si el estado es ERROR (0) y el tipo es COURSE (0).
+        if ($row->status == coursetransfer_request::STATUS_ERROR && $row->type == coursetransfer_request::TYPE_COURSE) {
+            // Asegurarse de que el módulo AMD esté cargado.
+            $PAGE->requires->js_call_amd('local_coursetransfer/retry_request', 'init');
+
+            return '<button type="button" class="btn btn-warning btn-sm retry-request-btn" 
+                        data-request-id="' . $row->id . '" 
+                        title="' . get_string('retry_request_help', 'local_coursetransfer') . '">' .
+                    '<i class="fa fa-refresh"></i> ' . get_string('retry_request', 'local_coursetransfer') .
+                    '</button>';
+        }
+
+        return '';
+    }
 }
+

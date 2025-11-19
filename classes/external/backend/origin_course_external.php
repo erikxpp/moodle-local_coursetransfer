@@ -117,18 +117,32 @@ class origin_course_external extends external_api {
                 $courses = coursetransfer::get_courses_user($user, $page, $perpage, $search);
                 $totalcourses = $courses['total'];
                 foreach ($courses['courses'] as $course) {
-                    $url = new moodle_url('/course/view.php', ['id' => $course->id]);
-                    $item = new stdClass();
-                    $item->id = $course->id;
-                    $item->url = $url->out(false);
-                    $item->fullname = $course->fullname;
-                    $item->shortname = $course->shortname;
-                    $item->idnumber = $course->idnumber;
-                    $item->categoryid = $course->category;
-                    $item->backupsizeestimated = coursetransfer::get_backup_size_estimated($course->id);
-                    $category = core_course_category::get($item->categoryid);
-                    $item->categoryname = $category->name;
-                    $data[] = $item;
+                    try {
+                        $url = new moodle_url('/course/view.php', ['id' => $course->id]);
+                        $item = new stdClass();
+                        $item->id = $course->id;
+                        $item->url = $url->out(false);
+                        $item->fullname = $course->fullname;
+                        $item->shortname = $course->shortname;
+                        $item->idnumber = $course->idnumber;
+                        $item->categoryid = $course->category;
+                        
+                        // Protected call: if backup size estimation fails, set to 0
+                        try {
+                            $item->backupsizeestimated = coursetransfer::get_backup_size_estimated($course->id);
+                        } catch (Exception $e) {
+                            $item->backupsizeestimated = '0';
+                            debugging('Could not estimate backup size for course ' . $course->id . ': ' . $e->getMessage(), DEBUG_DEVELOPER);
+                        }
+                        
+                        $category = core_course_category::get($item->categoryid);
+                        $item->categoryname = $category->name;
+                        $data[] = $item;
+                    } catch (Exception $e) {
+                        // If individual course processing fails, log it and continue with next course
+                        debugging('Could not process course ' . $course->id . ' in origin_get_courses: ' . $e->getMessage(), DEBUG_DEVELOPER);
+                        continue;
+                    }
                 }
                 $paging['totalcount'] = $totalcourses;
                 $paging['page'] = $page;

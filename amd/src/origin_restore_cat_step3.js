@@ -69,6 +69,12 @@ define([
                         item.prop('checked', config.selected);
                     });
                 }
+            } else {
+                // Si no hay datos en sessionStorage, marcar checkbox de usuarios por defecto
+                let originUsersCheckbox = $('#origin_enrol_users');
+                if (originUsersCheckbox.length) {
+                    originUsersCheckbox.prop('checked', true);
+                }
             }
             this.node.find(ACTIONS.NEXT).on('click', this.clickNext.bind(this));
             this.node.find('#origin_schedule').on('click', this.clickSchedule.bind(this));

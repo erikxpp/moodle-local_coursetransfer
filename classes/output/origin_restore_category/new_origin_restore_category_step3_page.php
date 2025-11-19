@@ -122,6 +122,7 @@ class new_origin_restore_category_step3_page  extends new_origin_restore_categor
         $data->next_url_disabled = true;
         $data->has_scheduled_time = true;
         $data->has_origin_user_data = coursetransfer::has_origin_user_data($USER);
+        $data->origin_user_data_checked = true; // Por defecto seleccionado para categorías
         $data->can_remove_origin_course = false;
         $data->can_target_restore_merge = false;
         $data->can_target_restore_content_remove = false;

@@ -124,8 +124,12 @@ function render_logs_timeline($logs, $direction) {
                     if (is_numeric($value) && in_array($key, ['file_size', 'filesize'])) {
                         $value = display_size($value);
                     }
+                    // Convert arrays/objects to JSON string for display.
+                    if (is_array($value) || is_object($value)) {
+                        $value = json_encode($value, JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE);
+                    }
                     $html .= html_writer::tag('li', 
-                        html_writer::tag('code', $key) . ': ' . htmlspecialchars($value)
+                        html_writer::tag('code', $key) . ': ' . htmlspecialchars((string)$value)
                     );
                 }
                 $html .= html_writer::end_tag('ul');
@@ -363,6 +367,32 @@ if ($stuck) {
 }
 
 echo html_writer::table($table);
+
+// Display retry button if request failed and is a course request
+if ($request->status === coursetransfer_request::STATUS_ERROR && 
+    $request->type === coursetransfer_request::TYPE_COURSE) {
+    
+    echo html_writer::div(
+        html_writer::tag('button',
+            '<i class="fa fa-refresh"></i> ' . get_string('retry_request', 'local_coursetransfer'),
+            [
+                'class' => 'btn btn-warning btn-lg mt-3',
+                'data-action' => 'retry-request',
+                'data-requestid' => $requestid,
+                'title' => get_string('retry_request_help', 'local_coursetransfer')
+            ]
+        ) .
+        html_writer::tag('p',
+            get_string('retry_request_description', 'local_coursetransfer'),
+            ['class' => 'small text-muted mt-2']
+        ),
+        'text-center'
+    );
+    
+    // Initialize retry JavaScript
+    $PAGE->requires->js_call_amd('local_coursetransfer/retry_request', 'init', [$requestid]);
+}
+
 echo html_writer::end_tag('div'); // card-body
 echo html_writer::end_tag('div'); // card
 

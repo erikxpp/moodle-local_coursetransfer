@@ -338,7 +338,7 @@ $string['not_course_found'] = 'No course found...';
 $string['backup_cleanup_settings'] = 'Backup File Cleanup Settings';
 $string['backup_cleanup_settings_desc'] = 'Configuration for automatic cleanup of MBZ backup files after course transfers';
 $string['auto_cleanup_origin_backup'] = 'Auto-cleanup origin backup';
-$string['auto_cleanup_origin_backup_desc'] = 'If enabled, the MBZ file from the origin course will be automatically deleted after the destination successfully downloads it. This saves disk space on the origin server.';
+$string['auto_cleanup_origin_backup_desc'] = 'If enabled, the MBZ file from the origin course will be automatically deleted after the destination successfully completes the restore and notifies the origin. This saves disk space on the origin server.';
 $string['auto_cleanup_target_backup'] = 'Auto-cleanup target backup';
 $string['auto_cleanup_target_backup_desc'] = 'If enabled, the downloaded MBZ file on the destination will be automatically deleted after the course restoration completes successfully. This saves disk space on the destination server.';
 $string['backup_retention_hours'] = 'Backup retention hours';
@@ -423,3 +423,16 @@ $string['small_file_timeout'] = 'Small file timeout (seconds)';
 $string['small_file_timeout_desc'] = 'Timeout for small file downloads using direct method (default: 300 seconds = 5 minutes)';
 $string['ssl_verify'] = 'SSL certificate verification';
 $string['ssl_verify_desc'] = 'Verify SSL certificates when downloading from HTTPS sources (recommended: enabled)';
+
+// Retry request functionality
+$string['retry_request'] = 'Retry Request';
+$string['retry_request_help'] = 'Create a new request with the same parameters as this failed request';
+$string['retry_request_description'] = 'This action will create a new transfer request with the same parameters as the failed request. Orphaned files and failed tasks will be automatically cleaned before starting the new process.';
+$string['retry_request_confirm_title'] = 'Retry failed request?';
+$string['retry_request_confirm_message'] = 'A new transfer request will be created with the same parameters. Files and tasks from the previous request will be automatically cleaned. Do you want to continue?';
+$string['retry_request_success'] = 'New request created successfully. Redirecting to details...';
+$string['retry_request_failed'] = 'Error creating new request';
+$string['onlyerrorrequestscanberetried'] = 'Only requests in error status can be retried';
+$string['onlycourserequestscanberetried'] = 'Only course requests can be retried (not categories or deletions)';
+$string['processing'] = 'Processing...';
+$string['retry'] = 'Retry';

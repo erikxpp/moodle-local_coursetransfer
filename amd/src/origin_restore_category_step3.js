@@ -72,6 +72,9 @@ define([
             this.node.find(ACTIONS.COURSE_SELECT).on('click', this.selectCourse.bind(this));
             this.node.find(ACTIONS.NEXT).on('click', this.clickNext.bind(this));
             this.node.find('#origin_schedule').on('click', this.clickSchedule.bind(this));
+            
+            // Marcar checkbox de usuarios por defecto para categorías
+            $('#origin_users').prop('checked', true);
         }
 
         restoreCategoryStep3.prototype.clickSchedule = function(e) {
