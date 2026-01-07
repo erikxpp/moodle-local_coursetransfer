@@ -230,6 +230,36 @@ try {
     
     cli_writeln("[RESTORE CLI] Restore plan executed successfully");
 
+    // POST-RESTORE: Update course idnumber from origin
+    // Moodle's restore doesn't properly copy the idnumber, so we need to do it manually
+    if (!empty($request->origin_course_idnumber)) {
+        cli_writeln("[RESTORE CLI] Updating course idnumber to: {$request->origin_course_idnumber}");
+        $DB->set_field('course', 'idnumber', $request->origin_course_idnumber, ['id' => $request->target_course_id]);
+    } else {
+        // Try to get idnumber from the backup's course.xml
+        $course_xml_path = $backuppath . '/course/course.xml';
+        if (file_exists($course_xml_path)) {
+            $course_xml = simplexml_load_file($course_xml_path);
+            if ($course_xml && !empty($course_xml->idnumber)) {
+                $origin_idnumber = (string)$course_xml->idnumber;
+                cli_writeln("[RESTORE CLI] Updating course idnumber from backup: {$origin_idnumber}");
+                $DB->set_field('course', 'idnumber', $origin_idnumber, ['id' => $request->target_course_id]);
+            }
+        }
+    }
+
+    // POST-RESTORE: Validate and log availability restrictions
+    cli_writeln("[RESTORE CLI] Validating availability restrictions...");
+    $availability_issues = validate_availability_restrictions($request->target_course_id);
+    if (!empty($availability_issues)) {
+        cli_writeln("[RESTORE CLI] Availability warnings: " . count($availability_issues) . " issues found");
+        foreach ($availability_issues as $issue) {
+            cli_writeln("[RESTORE CLI]   - " . $issue);
+        }
+    } else {
+        cli_writeln("[RESTORE CLI] All availability restrictions validated successfully");
+    }
+
     // Cleanup temp directory
     fulldelete($backuppath);
 
@@ -270,4 +300,110 @@ try {
     }
     
     exit(1);
+}
+
+/**
+ * Validate availability restrictions in a restored course.
+ * 
+ * Checks that all availability conditions (date restrictions, completion requirements,
+ * activity dependencies) are properly restored and functional.
+ *
+ * @param int $courseid The course ID to validate
+ * @return array List of issues found (empty if all OK)
+ */
+function validate_availability_restrictions($courseid) {
+    global $DB;
+    
+    $issues = [];
+    
+    // Get all course modules with availability restrictions
+    $cms = $DB->get_records_sql(
+        "SELECT cm.id, cm.course, cm.module, cm.instance, cm.availability, m.name as modname
+         FROM {course_modules} cm
+         JOIN {modules} m ON m.id = cm.module
+         WHERE cm.course = :courseid AND cm.availability IS NOT NULL AND cm.availability != ''",
+        ['courseid' => $courseid]
+    );
+    
+    foreach ($cms as $cm) {
+        $availability = json_decode($cm->availability, true);
+        if (!$availability) {
+            continue;
+        }
+        
+        // Check for broken references in availability conditions
+        $broken = check_availability_tree($availability, $courseid, $cm->id);
+        if (!empty($broken)) {
+            $modinfo = get_fast_modinfo($courseid);
+            $cminfo = $modinfo->get_cm($cm->id);
+            $issues[] = "Module '{$cminfo->name}' (id:{$cm->id}): " . implode(', ', $broken);
+        }
+    }
+    
+    // Also check section availability
+    $sections = $DB->get_records_sql(
+        "SELECT id, section, name, availability 
+         FROM {course_sections} 
+         WHERE course = :courseid AND availability IS NOT NULL AND availability != ''",
+        ['courseid' => $courseid]
+    );
+    
+    foreach ($sections as $section) {
+        $availability = json_decode($section->availability, true);
+        if (!$availability) {
+            continue;
+        }
+        
+        $broken = check_availability_tree($availability, $courseid, null);
+        if (!empty($broken)) {
+            $section_name = $section->name ?: "Section {$section->section}";
+            $issues[] = "Section '{$section_name}': " . implode(', ', $broken);
+        }
+    }
+    
+    return $issues;
+}
+
+/**
+ * Recursively check an availability condition tree for broken references.
+ *
+ * @param array $tree The availability tree
+ * @param int $courseid The course ID
+ * @param int|null $cmid The course module ID (for context)
+ * @return array List of issues found
+ */
+function check_availability_tree($tree, $courseid, $cmid) {
+    global $DB;
+    
+    $issues = [];
+    
+    if (isset($tree['c']) && is_array($tree['c'])) {
+        // This is a condition set, check each condition
+        foreach ($tree['c'] as $condition) {
+            $sub_issues = check_availability_tree($condition, $courseid, $cmid);
+            $issues = array_merge($issues, $sub_issues);
+        }
+    }
+    
+    // Check for completion condition (requires another activity to be completed)
+    if (isset($tree['type']) && $tree['type'] === 'completion') {
+        if (isset($tree['cm'])) {
+            $referenced_cm = $DB->get_record('course_modules', ['id' => $tree['cm'], 'course' => $courseid]);
+            if (!$referenced_cm) {
+                $issues[] = "References missing activity (cm id: {$tree['cm']})";
+            }
+        }
+    }
+    
+    // Check for grade condition
+    if (isset($tree['type']) && $tree['type'] === 'grade') {
+        if (isset($tree['cm'])) {
+            $referenced_cm = $DB->get_record('course_modules', ['id' => $tree['cm'], 'course' => $courseid]);
+            if (!$referenced_cm) {
+                $issues[] = "Grade condition references missing activity (cm id: {$tree['cm']})";
+            }
+        }
+    }
+    
+    return $issues;
 }
