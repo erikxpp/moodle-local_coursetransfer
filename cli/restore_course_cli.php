@@ -316,8 +316,17 @@ try {
         cli_writeln("[RESTORE CLI]   (Backup file will be cleaned by scheduled task in origin after 48h)");
     }
 
-    // Update request status to completed
-    $request->status = coursetransfer_request::STATUS_COMPLETED;
+    // Determine final status based on validation results
+    $has_differences = isset($validation_result) && !$validation_result['success'];
+    
+    if ($has_differences) {
+        $request->status = coursetransfer_request::STATUS_COMPLETED_WITH_DIFFERENCES;
+        cli_writeln("[RESTORE CLI] STATUS: Completed with differences");
+    } else {
+        $request->status = coursetransfer_request::STATUS_COMPLETED;
+        cli_writeln("[RESTORE CLI] STATUS: Completed successfully");
+    }
+    
     $request->timemodified = time();
     $DB->update_record('local_coursetransfer_request', $request);
 
@@ -1340,11 +1349,65 @@ function validate_sections_simple($origin_data, $courseid) {
 }
 
 /**
- * Log validation results to coursetransfer log.
+ * Log validation results to coursetransfer log with HTML formatted table.
  */
 function log_validation_results($requestid, $checks, $all_passed) {
     global $DB;
     
+    // Build HTML table for validation results
+    $html = '<div class="validation-results">';
+    
+    // Summary table
+    $html .= '<table class="table table-bordered table-sm" style="margin-top: 10px;">';
+    $html .= '<thead class="thead-light"><tr>';
+    $html .= '<th style="width: 25%;">Componente</th>';
+    $html .= '<th style="width: 10%;">Estado</th>';
+    $html .= '<th style="width: 30%;">Origen</th>';
+    $html .= '<th style="width: 35%;">Destino / Acción</th>';
+    $html .= '</tr></thead><tbody>';
+    
+    foreach ($checks as $check) {
+        $rowclass = $check['passed'] ? '' : 'table-warning';
+        $badge = $check['passed'] 
+            ? '<span class="badge badge-success">✓ OK</span>' 
+            : '<span class="badge badge-warning">⚠ Diferencia</span>';
+        
+        // Parse the message to extract origin/dest values
+        $origin_info = '-';
+        $dest_action = $check['message'];
+        
+        if (!$check['passed']) {
+            // Try to parse for more detail
+            $dest_action = format_validation_action($check['name'], $check['message']);
+        }
+        
+        $html .= "<tr class=\"{$rowclass}\">";
+        $html .= '<td><strong>' . htmlspecialchars($check['name']) . '</strong></td>';
+        $html .= "<td>{$badge}</td>";
+        $html .= '<td>' . get_origin_summary($check) . '</td>';
+        $html .= '<td>' . $dest_action . '</td>';
+        $html .= '</tr>';
+    }
+    
+    $html .= '</tbody></table>';
+    
+    // Add legend/help if there are differences
+    if (!$all_passed) {
+        $html .= '<div class="alert alert-info mt-3" style="font-size: 0.9em;">';
+        $html .= '<strong>💡 ¿Cómo resolver las diferencias?</strong><br>';
+        $html .= '<ul class="mb-0 mt-2">';
+        $html .= '<li><strong>Plugins faltantes</strong> (questionnaire, onetopic): Instalar el plugin en el servidor destino</li>';
+        $html .= '<li><strong>Formato del curso</strong>: Cambiar manualmente en Configuración del curso → Formato</li>';
+        $html .= '<li><strong>Completion tracking</strong>: Verificar que esté habilitado en el sitio (Admin → Avanzado)</li>';
+        $html .= '<li><strong>Visibilidad</strong>: Cambiar en Configuración del curso → Visibilidad</li>';
+        $html .= '<li><strong>Fechas</strong>: Ajustar en Configuración del curso → Fechas</li>';
+        $html .= '</ul>';
+        $html .= '</div>';
+    }
+    
+    $html .= '</div>';
+    
+    // Simple summary for compatibility
     $summary = [];
     foreach ($checks as $check) {
         $status = $check['passed'] ? 'PASS' : 'FAIL';
@@ -1362,7 +1425,8 @@ function log_validation_results($requestid, $checks, $all_passed) {
     $log->extra_data = json_encode([
         'checks' => $checks,
         'all_passed' => $all_passed,
-        'validation_summary' => $summary
+        'validation_summary' => $summary,
+        'html_table' => $html
     ]);
     $log->timecreated = time();
     
@@ -1371,6 +1435,83 @@ function log_validation_results($requestid, $checks, $all_passed) {
     } catch (\Exception $e) {
         cli_writeln("[RESTORE CLI] Warning: Could not log validation results: " . $e->getMessage());
     }
+}
+
+/**
+ * Get origin summary from check data.
+ */
+function get_origin_summary($check) {
+    if ($check['passed']) {
+        return '<span class="text-success">' . htmlspecialchars($check['message']) . '</span>';
+    }
+    
+    // Parse message for origin values
+    $msg = $check['message'];
+    $origin_parts = [];
+    
+    if (preg_match_all('/(\w+):\s*origin=([^,;]+)/i', $msg, $matches, PREG_SET_ORDER)) {
+        foreach ($matches as $match) {
+            $origin_parts[] = $match[1] . ': ' . $match[2];
+        }
+    }
+    
+    if (!empty($origin_parts)) {
+        return implode('<br>', $origin_parts);
+    }
+    
+    return '-';
+}
+
+/**
+ * Format validation action/recommendation based on the check type.
+ */
+function format_validation_action($name, $message) {
+    $actions = [];
+    
+    switch ($name) {
+        case 'Course Configuration':
+            if (strpos($message, 'format') !== false) {
+                if (preg_match('/origin=(\w+),\s*dest=(\w+)/', $message, $m)) {
+                    $actions[] = "<strong>Formato:</strong> dest={$m[2]} <br><small class='text-muted'>→ Instalar plugin '{$m[1]}' o cambiar manualmente</small>";
+                }
+            }
+            if (strpos($message, 'Completion') !== false) {
+                $actions[] = "<strong>Completion:</strong> Deshabilitado<br><small class='text-muted'>→ Habilitar en Admin → Características avanzadas</small>";
+            }
+            if (strpos($message, 'Visibility') !== false) {
+                $actions[] = "<strong>Visibilidad:</strong> Visible<br><small class='text-muted'>→ Ocultar si es necesario en Config. del curso</small>";
+            }
+            if (strpos($message, 'News') !== false) {
+                $actions[] = "<strong>Noticias:</strong> 0<br><small class='text-muted'>→ Ajustar en Config. del curso</small>";
+            }
+            if (strpos($message, 'date') !== false) {
+                $actions[] = "<strong>Fechas:</strong> Ajustadas al restore<br><small class='text-muted'>→ Cambiar manualmente si necesario</small>";
+            }
+            break;
+            
+        case 'Activities Count':
+            if (preg_match('/(\w+):\s*origin=(\d+),\s*dest=(\d+)/', $message, $m)) {
+                $module = $m[1];
+                $origin = $m[2];
+                $dest = $m[3];
+                if ($dest == 0) {
+                    $actions[] = "<strong>{$module}:</strong> No restaurado (dest=0)<br><small class='text-muted'>→ Instalar plugin 'mod_{$module}'</small>";
+                } else {
+                    $actions[] = "<strong>{$module}:</strong> dest={$dest}<br><small class='text-muted'>→ Verificar manualmente</small>";
+                }
+            }
+            break;
+            
+        default:
+            // Generic formatting
+            if (preg_match('/origin=(\d+),\s*dest=(\d+)/', $message, $m)) {
+                $actions[] = "dest={$m[2]} (origen={$m[1]})";
+            } else {
+                $actions[] = htmlspecialchars($message);
+            }
+    }
+    
+    return !empty($actions) ? implode('<br>', $actions) : htmlspecialchars($message);
 }
 
 /**

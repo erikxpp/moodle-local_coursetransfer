@@ -91,6 +91,7 @@ class coursetransfer {
         80 => ['shortname' => 'restore', 'alert' => 'secondary'],
         90 => ['shortname' => 'incompleted', 'alert' => 'warning'],
         100 => ['shortname' => 'completed', 'alert' => 'success'],
+        101 => ['shortname' => 'completed_with_differences', 'alert' => 'warning'],
     ];
 
     /** @var stdClass Course */

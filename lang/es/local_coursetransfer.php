@@ -140,6 +140,7 @@ $string['status_download'] = "Descargando...";
 $string['status_downloaded'] = "Descargada";
 $string['status_restore'] = "Restaurando...";
 $string['status_completed'] = "Completada";
+$string['status_completed_with_differences'] = "Completada (Diferencias)";
 $string['error_validate_site'] = "El sitio seleccionado es invalido";
 $string['error_not_controlled'] = "El sitio no está disponible en este momento. Inténtelo más tarde";
 $string['site_not_found'] = "El sitio seleccionado no se encuentra entre los disponibles";

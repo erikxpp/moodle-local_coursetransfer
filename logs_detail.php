@@ -114,26 +114,38 @@ function render_logs_timeline($logs, $direction) {
         if (!empty($log->extra_data)) {
             $extradata = json_decode($log->extra_data, true);
             if ($extradata && is_array($extradata)) {
-                $html .= html_writer::start_tag('div', ['class' => 'extra-data mt-2']);
-                $html .= html_writer::tag('small', 
-                    html_writer::tag('strong', 'ℹ️ Additional Information:'), 
-                    ['class' => 'text-muted']
-                );
-                $html .= html_writer::start_tag('ul', ['class' => 'small mb-0 mt-1']);
-                foreach ($extradata as $key => $value) {
-                    if (is_numeric($value) && in_array($key, ['file_size', 'filesize'])) {
-                        $value = display_size($value);
-                    }
-                    // Convert arrays/objects to JSON string for display.
-                    if (is_array($value) || is_object($value)) {
-                        $value = json_encode($value, JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE);
-                    }
-                    $html .= html_writer::tag('li', 
-                        html_writer::tag('code', $key) . ': ' . htmlspecialchars((string)$value)
+                // Check if there's a pre-formatted HTML table for validation results
+                if (isset($extradata['html_table']) && $log->action === 'POST_RESTORE_VALIDATION') {
+                    $html .= html_writer::start_tag('div', ['class' => 'validation-results-container mt-3']);
+                    $html .= html_writer::tag('strong', '📊 Resultados de Validación:', ['class' => 'd-block mb-2']);
+                    $html .= $extradata['html_table'];
+                    $html .= html_writer::end_tag('div');
+                } else {
+                    // Default display for other extra data
+                    $html .= html_writer::start_tag('div', ['class' => 'extra-data mt-2']);
+                    $html .= html_writer::tag('small', 
+                        html_writer::tag('strong', 'ℹ️ Additional Information:'), 
+                        ['class' => 'text-muted']
                     );
+                    $html .= html_writer::start_tag('ul', ['class' => 'small mb-0 mt-1']);
+                    foreach ($extradata as $key => $value) {
+                        // Skip html_table as it's already rendered above
+                        if ($key === 'html_table') continue;
+                        
+                        if (is_numeric($value) && in_array($key, ['file_size', 'filesize'])) {
+                            $value = display_size($value);
+                        }
+                        // Convert arrays/objects to JSON string for display.
+                        if (is_array($value) || is_object($value)) {
+                            $value = json_encode($value, JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE);
+                        }
+                        $html .= html_writer::tag('li', 
+                            html_writer::tag('code', $key) . ': ' . htmlspecialchars((string)$value)
+                        );
+                    }
+                    $html .= html_writer::end_tag('ul');
+                    $html .= html_writer::end_tag('div');
                 }
-                $html .= html_writer::end_tag('ul');
-                $html .= html_writer::end_tag('div');
             }
         }
         
@@ -291,6 +303,9 @@ $statusclass = 'badge-secondary';
 switch ($request->status) {
     case coursetransfer_request::STATUS_COMPLETED:
         $statusclass = 'badge-success';
+        break;
+    case coursetransfer_request::STATUS_COMPLETED_WITH_DIFFERENCES:
+        $statusclass = 'badge-warning';
         break;
     case coursetransfer_request::STATUS_ERROR:
         $statusclass = 'badge-danger';

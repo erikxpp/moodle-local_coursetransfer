@@ -87,6 +87,8 @@ class coursetransfer_request {
     const STATUS_INCOMPLETED = 90;
     /** @var int Status Completed */
     const STATUS_COMPLETED = 100;
+    /** @var int Status Completed with differences */
+    const STATUS_COMPLETED_WITH_DIFFERENCES = 101;
 
     /**
      * Get.
