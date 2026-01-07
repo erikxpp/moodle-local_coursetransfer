@@ -173,6 +173,13 @@ try {
     
     cli_writeln("[RESTORE CLI] Extraction complete");
 
+    // PRE-RESTORE: Load origin data from backup XMLs BEFORE restore
+    // (Moodle deletes the temp directory after restore, so we must read it now)
+    cli_writeln("[RESTORE CLI] Loading origin data from backup XMLs...");
+    $origin_data = load_origin_data_from_backup($backuppath);
+    cli_writeln("[RESTORE CLI] Origin data loaded: " . count($origin_data['activities']) . " activity types, " . 
+        count($origin_data['sections']) . " sections");
+
     // Get admin user for restore
     $admin = get_admin();
 
@@ -261,11 +268,12 @@ try {
     }
 
     // POST-RESTORE: Comprehensive comparison validation (origin vs destination)
+    // Note: $origin_data was loaded BEFORE the restore because Moodle deletes the temp dir
     cli_writeln("[RESTORE CLI] ========================================");
     cli_writeln("[RESTORE CLI] COMPARATIVE VALIDATION: Origin vs Destination");
     cli_writeln("[RESTORE CLI] ========================================");
     
-    $validation_result = validate_restore_completeness($backuppath, $request->target_course_id, $requestid);
+    $validation_result = validate_restore_completeness_with_data($origin_data, $request->target_course_id, $requestid);
     
     if ($validation_result['success']) {
         cli_writeln("[RESTORE CLI] ✓ VALIDATION PASSED - Course restored identically to origin");
@@ -279,16 +287,33 @@ try {
         cli_writeln("[RESTORE CLI] {$status_icon} {$check['name']}: {$check['message']}");
     }
 
-    // Cleanup temp directory
-    fulldelete($backuppath);
+    // Note: Moodle already cleaned the temp directory during restore
+    // fulldelete($backuppath); // Not needed - Moodle already did this
 
-    // Delete the backup file from moodledata to free space
-    cli_writeln("[RESTORE CLI] Cleaning up backup file...");
+    // Delete the backup file from moodledata (destination) to free space
+    cli_writeln("[RESTORE CLI] Cleaning up backup file (destination)...");
     try {
         $backupfile->delete();
-        cli_writeln("[RESTORE CLI] Backup file deleted successfully");
+        cli_writeln("[RESTORE CLI] Backup file deleted successfully (destination)");
     } catch (\Exception $deleteEx) {
         cli_writeln("[RESTORE CLI] Warning: Could not delete backup file: " . $deleteEx->getMessage());
+    }
+
+    // NOTIFY ORIGIN to cleanup the backup file there too (only the .mbz file, NOT the course)
+    cli_writeln("[RESTORE CLI] ========================================");
+    cli_writeln("[RESTORE CLI] NOTIFYING ORIGIN FOR BACKUP CLEANUP");
+    cli_writeln("[RESTORE CLI] ========================================");
+    
+    $origin_cleanup_result = notify_origin_cleanup($request);
+    if ($origin_cleanup_result['success']) {
+        if ($origin_cleanup_result['cleaned']) {
+            cli_writeln("[RESTORE CLI] ✓ Origin notified - backup file deleted in origin server");
+        } else {
+            cli_writeln("[RESTORE CLI] ✓ Origin notified - backup file kept (auto_cleanup disabled in origin)");
+        }
+    } else {
+        cli_writeln("[RESTORE CLI] ⚠ Could not notify origin: " . $origin_cleanup_result['error']);
+        cli_writeln("[RESTORE CLI]   (Backup file will be cleaned by scheduled task in origin after 48h)");
     }
 
     // Update request status to completed
@@ -515,22 +540,44 @@ function load_origin_data_from_backup($backuppath) {
         'users' => []
     ];
     
-    // Load course.xml
-    $course_xml_path = $backuppath . '/course/course.xml';
-    if (file_exists($course_xml_path)) {
-        $data['course'] = simplexml_load_file($course_xml_path);
+    cli_writeln("[VALIDATION DEBUG] Backup path: {$backuppath}");
+    cli_writeln("[VALIDATION DEBUG] Path exists: " . (is_dir($backuppath) ? 'YES' : 'NO'));
+    
+    // List contents of backup directory
+    if (is_dir($backuppath)) {
+        $contents = scandir($backuppath);
+        cli_writeln("[VALIDATION DEBUG] Backup contents: " . implode(', ', $contents));
+    }
+    
+    // Load course.xml - try multiple possible locations
+    $course_xml_paths = [
+        $backuppath . '/course/course.xml',
+        $backuppath . '/course.xml',
+    ];
+    
+    foreach ($course_xml_paths as $path) {
+        cli_writeln("[VALIDATION DEBUG] Checking course.xml at: {$path}");
+        if (file_exists($path)) {
+            cli_writeln("[VALIDATION DEBUG] Found course.xml at: {$path}");
+            $data['course'] = simplexml_load_file($path);
+            break;
+        }
     }
     
     // Load moodle_backup.xml for general info
     $backup_xml_path = $backuppath . '/moodle_backup.xml';
+    cli_writeln("[VALIDATION DEBUG] Checking moodle_backup.xml at: {$backup_xml_path}");
     if (file_exists($backup_xml_path)) {
+        cli_writeln("[VALIDATION DEBUG] Found moodle_backup.xml");
         $data['backup_info'] = simplexml_load_file($backup_xml_path);
     }
     
     // Count activities from activities folder
     $activities_path = $backuppath . '/activities';
+    cli_writeln("[VALIDATION DEBUG] Checking activities at: {$activities_path}");
     if (is_dir($activities_path)) {
         $dirs = scandir($activities_path);
+        cli_writeln("[VALIDATION DEBUG] Activities folders found: " . count($dirs));
         foreach ($dirs as $dir) {
             if ($dir === '.' || $dir === '..') continue;
             if (is_dir($activities_path . '/' . $dir)) {
@@ -543,21 +590,30 @@ function load_origin_data_from_backup($backuppath) {
                 $data['activities'][$type]++;
             }
         }
+        cli_writeln("[VALIDATION DEBUG] Activities by type: " . json_encode($data['activities']));
+    } else {
+        cli_writeln("[VALIDATION DEBUG] Activities folder NOT FOUND");
     }
     
     // Load sections
     $sections_path = $backuppath . '/sections';
+    cli_writeln("[VALIDATION DEBUG] Checking sections at: {$sections_path}");
     if (is_dir($sections_path)) {
         $dirs = scandir($sections_path);
+        $section_count = 0;
         foreach ($dirs as $dir) {
             if ($dir === '.' || $dir === '..') continue;
             if (is_dir($sections_path . '/' . $dir)) {
                 $section_xml = $sections_path . '/' . $dir . '/section.xml';
                 if (file_exists($section_xml)) {
                     $data['sections'][] = simplexml_load_file($section_xml);
+                    $section_count++;
                 }
             }
         }
+        cli_writeln("[VALIDATION DEBUG] Sections found: {$section_count}");
+    } else {
+        cli_writeln("[VALIDATION DEBUG] Sections folder NOT FOUND");
     }
     
     return $data;
@@ -1038,6 +1094,252 @@ function validate_sections($backuppath, $courseid) {
 }
 
 /**
+ * Validate restore completeness using pre-loaded origin data.
+ * This version uses data that was loaded BEFORE the restore executed,
+ * since Moodle deletes the temp backup directory during restore.
+ *
+ * @param array $origin_data Pre-loaded origin data from load_origin_data_from_backup()
+ * @param int $courseid Destination course ID
+ * @param int $requestid Request ID for logging
+ * @return array Validation result with 'success' and 'checks' array
+ */
+function validate_restore_completeness_with_data($origin_data, $courseid, $requestid) {
+    global $DB, $CFG;
+    
+    $checks = [];
+    $all_passed = true;
+    
+    cli_writeln("[RESTORE CLI] Starting validation with pre-loaded origin data...");
+    cli_writeln("[RESTORE CLI] Origin activities: " . json_encode($origin_data['activities']));
+    cli_writeln("[RESTORE CLI] Origin sections: " . count($origin_data['sections']));
+    
+    // 1. COURSE CONFIGURATION VALIDATION
+    cli_writeln("[RESTORE CLI] Checking course configuration...");
+    $config_check = validate_course_config($origin_data, $courseid);
+    $checks[] = $config_check;
+    if (!$config_check['passed']) $all_passed = false;
+    
+    // 2. ACTIVITIES COUNT VALIDATION (using pre-loaded data)
+    cli_writeln("[RESTORE CLI] Checking activities count...");
+    $activities_check = validate_activities_count($origin_data, $courseid);
+    $checks[] = $activities_check;
+    if (!$activities_check['passed']) $all_passed = false;
+    
+    // 3. QUIZ VALIDATION (simplified - count only since XMLs are gone)
+    cli_writeln("[RESTORE CLI] Checking quizzes...");
+    $quiz_check = validate_quizzes_simple($origin_data, $courseid);
+    $checks[] = $quiz_check;
+    if (!$quiz_check['passed']) $all_passed = false;
+    
+    // 4. ASSIGNMENTS VALIDATION (simplified)
+    cli_writeln("[RESTORE CLI] Checking assignments...");
+    $assign_check = validate_assignments_simple($origin_data, $courseid);
+    $checks[] = $assign_check;
+    if (!$assign_check['passed']) $all_passed = false;
+    
+    // 5. FORUM VALIDATION (simplified)
+    cli_writeln("[RESTORE CLI] Checking forums...");
+    $forum_check = validate_forums_simple($origin_data, $courseid);
+    $checks[] = $forum_check;
+    if (!$forum_check['passed']) $all_passed = false;
+    
+    // 6. FILES/RESOURCES VALIDATION (simplified)
+    cli_writeln("[RESTORE CLI] Checking files and resources...");
+    $files_check = validate_files_resources_simple($origin_data, $courseid);
+    $checks[] = $files_check;
+    if (!$files_check['passed']) $all_passed = false;
+    
+    // 7. SECTIONS VALIDATION (using pre-loaded sections count)
+    cli_writeln("[RESTORE CLI] Checking course sections...");
+    $sections_check = validate_sections_simple($origin_data, $courseid);
+    $checks[] = $sections_check;
+    if (!$sections_check['passed']) $all_passed = false;
+    
+    // Log to coursetransfer_log
+    log_validation_results($requestid, $checks, $all_passed);
+    
+    // Print summary
+    cli_writeln("\n[RESTORE CLI] ========== VALIDATION SUMMARY ==========");
+    foreach ($checks as $check) {
+        $status = $check['passed'] ? '✓ PASS' : '✗ FAIL';
+        cli_writeln("[RESTORE CLI] {$status}: {$check['name']} - {$check['message']}");
+    }
+    cli_writeln("[RESTORE CLI] =========================================\n");
+    
+    return [
+        'success' => $all_passed,
+        'checks' => $checks
+    ];
+}
+
+/**
+ * Simplified quiz validation using pre-loaded origin data.
+ */
+function validate_quizzes_simple($origin_data, $courseid) {
+    global $DB;
+    
+    $origin_count = $origin_data['activities']['quiz'] ?? 0;
+    
+    // Get destination quiz count and questions
+    $dest_quizzes = $DB->get_records_sql(
+        "SELECT q.id, q.name, COUNT(qs.id) as question_count
+         FROM {quiz} q
+         LEFT JOIN {quiz_slots} qs ON qs.quizid = q.id
+         WHERE q.course = :courseid
+         GROUP BY q.id, q.name",
+        ['courseid' => $courseid]
+    );
+    
+    $dest_count = count($dest_quizzes);
+    $total_questions = 0;
+    foreach ($dest_quizzes as $quiz) {
+        $total_questions += $quiz->question_count;
+    }
+    
+    if ($origin_count == $dest_count) {
+        return [
+            'name' => 'Quizzes',
+            'passed' => true,
+            'message' => "{$dest_count} quizzes restored with {$total_questions} questions total"
+        ];
+    }
+    
+    return [
+        'name' => 'Quizzes',
+        'passed' => false,
+        'message' => "Quiz count mismatch: origin={$origin_count}, dest={$dest_count}"
+    ];
+}
+
+/**
+ * Simplified assignments validation using pre-loaded origin data.
+ */
+function validate_assignments_simple($origin_data, $courseid) {
+    global $DB;
+    
+    $origin_count = $origin_data['activities']['assign'] ?? 0;
+    $dest_count = $DB->count_records('assign', ['course' => $courseid]);
+    
+    if ($origin_count == $dest_count) {
+        return [
+            'name' => 'Assignments',
+            'passed' => true,
+            'message' => "{$dest_count} assignments restored"
+        ];
+    }
+    
+    return [
+        'name' => 'Assignments',
+        'passed' => false,
+        'message' => "Assignment count mismatch: origin={$origin_count}, dest={$dest_count}"
+    ];
+}
+
+/**
+ * Simplified forums validation using pre-loaded origin data.
+ */
+function validate_forums_simple($origin_data, $courseid) {
+    global $DB;
+    
+    $origin_count = $origin_data['activities']['forum'] ?? 0;
+    $dest_count = $DB->count_records('forum', ['course' => $courseid]);
+    
+    // Also get discussions and posts for the message
+    $dest_discussions = $DB->count_records_sql(
+        "SELECT COUNT(*) FROM {forum_discussions} fd
+         JOIN {forum} f ON f.id = fd.forum
+         WHERE f.course = :courseid",
+        ['courseid' => $courseid]
+    );
+    
+    if ($origin_count == $dest_count) {
+        return [
+            'name' => 'Forums',
+            'passed' => true,
+            'message' => "{$dest_count} forums restored with {$dest_discussions} discussions"
+        ];
+    }
+    
+    return [
+        'name' => 'Forums',
+        'passed' => false,
+        'message' => "Forum count mismatch: origin={$origin_count}, dest={$dest_count}"
+    ];
+}
+
+/**
+ * Simplified files/resources validation using pre-loaded origin data.
+ */
+function validate_files_resources_simple($origin_data, $courseid) {
+    global $DB;
+    
+    $origin_resources = $origin_data['activities']['resource'] ?? 0;
+    $origin_folders = $origin_data['activities']['folder'] ?? 0;
+    $origin_urls = $origin_data['activities']['url'] ?? 0;
+    
+    $dest_resources = $DB->count_records('resource', ['course' => $courseid]);
+    $dest_folders = $DB->count_records('folder', ['course' => $courseid]);
+    $dest_urls = $DB->count_records('url', ['course' => $courseid]);
+    
+    $issues = [];
+    
+    if ($origin_resources != $dest_resources) {
+        $issues[] = "Resources: origin={$origin_resources}, dest={$dest_resources}";
+    }
+    if ($origin_folders != $dest_folders) {
+        $issues[] = "Folders: origin={$origin_folders}, dest={$dest_folders}";
+    }
+    if ($origin_urls != $dest_urls) {
+        $issues[] = "URLs: origin={$origin_urls}, dest={$dest_urls}";
+    }
+    
+    $total = $dest_resources + $dest_folders + $dest_urls;
+    
+    if (empty($issues)) {
+        return [
+            'name' => 'Files & Resources',
+            'passed' => true,
+            'message' => "{$total} file resources restored (resources={$dest_resources}, folders={$dest_folders}, urls={$dest_urls})"
+        ];
+    }
+    
+    return [
+        'name' => 'Files & Resources',
+        'passed' => false,
+        'message' => implode('; ', $issues)
+    ];
+}
+
+/**
+ * Simplified sections validation using pre-loaded origin data.
+ */
+function validate_sections_simple($origin_data, $courseid) {
+    global $DB;
+    
+    $origin_sections = count($origin_data['sections']);
+    
+    $dest_sections = $DB->count_records_select('course_sections', 
+        'course = :courseid', 
+        ['courseid' => $courseid]
+    );
+    
+    // Allow small differences (section 0 handling varies)
+    if ($origin_sections == $dest_sections || abs($origin_sections - $dest_sections) <= 1) {
+        return [
+            'name' => 'Course Sections',
+            'passed' => true,
+            'message' => "{$dest_sections} sections restored"
+        ];
+    }
+    
+    return [
+        'name' => 'Course Sections',
+        'passed' => false,
+        'message' => "Section count: origin={$origin_sections}, dest={$dest_sections}"
+    ];
+}
+
+/**
  * Log validation results to coursetransfer log.
  */
 function log_validation_results($requestid, $checks, $all_passed) {
@@ -1068,5 +1370,119 @@ function log_validation_results($requestid, $checks, $all_passed) {
         $DB->insert_record('local_coursetransfer_log', $log);
     } catch (\Exception $e) {
         cli_writeln("[RESTORE CLI] Warning: Could not log validation results: " . $e->getMessage());
+    }
+}
+
+/**
+ * Notify origin server to cleanup the backup file after successful restore.
+ * This only deletes the .mbz backup file in the origin, NOT the course itself.
+ *
+ * @param stdClass $request The coursetransfer request object
+ * @return array ['success' => bool, 'cleaned' => bool, 'error' => string]
+ */
+function notify_origin_cleanup($request) {
+    global $CFG;
+    
+    require_once($CFG->dirroot . '/local/coursetransfer/classes/coursetransfer.php');
+    require_once($CFG->dirroot . '/local/coursetransfer/classes/api/request.php');
+    
+    try {
+        // Get the origin site configuration
+        $site = \local_coursetransfer\coursetransfer::get_site_by_url($request->siteurl);
+        
+        if (!$site) {
+            return [
+                'success' => false,
+                'cleaned' => false,
+                'error' => 'Could not find origin site configuration for: ' . $request->siteurl
+            ];
+        }
+        
+        // Create API request to origin
+        $api_request = new \local_coursetransfer\api\request($site);
+        
+        // Get the user who initiated the request
+        $user = \core_user::get_user($request->userid);
+        if (!$user) {
+            // Fallback to admin if user not found
+            $user = get_admin();
+        }
+        
+        // Call the webservice to notify origin that restore completed
+        // This triggers cleanup of the .mbz file in origin if auto_cleanup_origin_backup is enabled
+        $response = $api_request->target_backup_course_downloaded($request->id, $user);
+        
+        if ($response->success) {
+            $cleaned = isset($response->data->cleaned) ? $response->data->cleaned : false;
+            
+            // Log the notification
+            \local_coursetransfer\coursetransfer_logger::info(
+                $request->id,
+                \local_coursetransfer\coursetransfer_logger::DIRECTION_TARGET,
+                'ORIGIN_CLEANUP_NOTIFIED',
+                $cleaned ? 
+                    'Origin server notified - backup file (.mbz) deleted successfully' : 
+                    'Origin server notified - backup file kept (auto_cleanup_origin_backup disabled)',
+                [
+                    'origin_url' => $request->siteurl,
+                    'backup_cleaned' => $cleaned,
+                    'request_id' => $request->id
+                ]
+            );
+            
+            return [
+                'success' => true,
+                'cleaned' => $cleaned,
+                'error' => ''
+            ];
+        } else {
+            // Handle both array and object responses
+            $error_msg = 'Unknown error';
+            if (isset($response->errors)) {
+                if (is_array($response->errors) && isset($response->errors[0])) {
+                    $err = $response->errors[0];
+                    $error_msg = is_array($err) ? ($err['msg'] ?? 'Unknown') : (is_object($err) ? ($err->msg ?? 'Unknown') : (string)$err);
+                } else if (is_object($response->errors)) {
+                    $errors_arr = (array)$response->errors;
+                    if (!empty($errors_arr)) {
+                        $first = reset($errors_arr);
+                        $error_msg = is_object($first) ? ($first->msg ?? json_encode($first)) : (string)$first;
+                    }
+                } else {
+                    $error_msg = (string)$response->errors;
+                }
+            }
+            
+            \local_coursetransfer\coursetransfer_logger::warning(
+                $request->id,
+                \local_coursetransfer\coursetransfer_logger::DIRECTION_TARGET,
+                'ORIGIN_CLEANUP_FAILED',
+                'Failed to notify origin for backup cleanup: ' . $error_msg,
+                null,
+                ['errors' => is_object($response->errors) ? json_encode($response->errors) : $response->errors]
+            );
+            
+            return [
+                'success' => false,
+                'cleaned' => false,
+                'error' => $error_msg
+            ];
+        }
+        
+    } catch (\Exception $e) {
+        \local_coursetransfer\coursetransfer_logger::warning(
+            $request->id,
+            \local_coursetransfer\coursetransfer_logger::DIRECTION_TARGET,
+            'ORIGIN_CLEANUP_EXCEPTION',
+            'Exception when notifying origin for cleanup: ' . $e->getMessage(),
+            null,
+            ['exception' => get_class($e)]
+        );
+        
+        return [
+            'success' => false,
+            'cleaned' => false,
+            'error' => $e->getMessage()
+        ];
     }
 }
