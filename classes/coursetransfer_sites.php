@@ -98,11 +98,10 @@ class coursetransfer_sites {
     public static function get_by_host(string $type, string $host) {
         global $DB;
         $compare = $DB->sql_compare_text('host');
-        $compareplaceholder = $DB->sql_compare_text(':host');
         $records = $DB->get_records_sql(
                 "SELECT id, host, token
                     FROM {" . self::TABLE_PREX . $type . "}
-                    WHERE {$compare} = {$compareplaceholder}",
+                    WHERE {$compare} = " . $DB->sql_compare_text(':host'),
                 [
                         'host' => $host,
                 ]

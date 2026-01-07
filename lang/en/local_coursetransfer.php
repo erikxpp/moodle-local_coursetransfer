@@ -436,3 +436,6 @@ $string['onlyerrorrequestscanberetried'] = 'Only requests in error status can be
 $string['onlycourserequestscanberetried'] = 'Only course requests can be retried (not categories or deletions)';
 $string['processing'] = 'Processing...';
 $string['retry'] = 'Retry';
+
+// Queue system
+$string['queue_processor_task'] = 'Course Transfer - Queue Processor';

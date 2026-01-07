@@ -152,5 +152,148 @@ function xmldb_local_coursetransfer_upgrade($oldversion): bool {
         upgrade_plugin_savepoint(true, 2024110200, 'local', 'coursetransfer');
     }
 
+    if ($oldversion < 2024122600) {
+        // Add missing capabilities to local_coursetransfer_ws role.
+        require_once($CFG->dirroot . '/local/coursetransfer/classes/factory/role.php');
+        
+        $role = $DB->get_record('role', ['shortname' => 'local_coursetransfer_ws']);
+        
+        if ($role) {
+            $roleid = $role->id;
+            $context = context_system::instance();
+            
+            // List of new capabilities to add
+            $newcapabilities = [
+                // Course viewing and management
+                'moodle/course:viewhiddenactivities',
+                'moodle/course:viewparticipants',
+                'moodle/course:update',
+                'moodle/course:changefullname',
+                'moodle/course:changeshortname',
+                'moodle/course:changeidnumber',
+                'moodle/course:changecategory',
+                'moodle/course:manageactivities',
+                
+                // Category management
+                'moodle/category:viewhiddencategories',
+                
+                // File and content access
+                'moodle/site:accessallgroups',
+                'moodle/site:viewfullnames',
+                
+                // Question bank (critical for quiz backup/restore)
+                'moodle/question:viewall',
+                'moodle/question:viewmine',
+                'moodle/question:add',
+                'moodle/question:editall',
+                'moodle/question:editmine',
+                'moodle/question:moveall',
+                'moodle/question:movemine',
+                'moodle/question:usemine',
+                'moodle/question:useall',
+                
+                // Plugin-specific
+                'local/coursetransfer:origin_restore_course_users',
+                'local/coursetransfer:target_restore_merge',
+                'local/coursetransfer:target_restore_content_remove',
+                'local/coursetransfer:target_restore_groups_remove',
+                'local/coursetransfer:target_restore_enrol_remove',
+            ];
+            
+            foreach ($newcapabilities as $capability) {
+                // Check if capability already exists for this role
+                $exists = $DB->record_exists('role_capabilities', [
+                    'roleid' => $roleid,
+                    'capability' => $capability,
+                    'contextid' => $context->id
+                ]);
+                
+                if (!$exists) {
+                    // Assign the capability
+                    \local_coursetransfer\factory\role::add_capability($roleid, $capability);
+                    mtrace("  Added capability: {$capability}");
+                }
+            }
+            
+            mtrace("Updated coursetransfer role with " . count($newcapabilities) . " new capabilities");
+        } else {
+            mtrace("Warning: Role local_coursetransfer_ws not found. Capabilities not updated.");
+        }
+        
+        // Coursetransfer savepoint reached.
+        upgrade_plugin_savepoint(true, 2024122600, 'local', 'coursetransfer');
+    }
+
+    // Add restore queue table for sequential processing.
+    if ($oldversion < 2025010701) {
+        
+        // Define table local_coursetransfer_queue to be created.
+        $table = new xmldb_table('local_coursetransfer_queue');
+
+        // Adding fields to table.
+        $table->add_field('id', XMLDB_TYPE_INTEGER, '10', null, XMLDB_NOTNULL, XMLDB_SEQUENCE, null);
+        $table->add_field('requestid', XMLDB_TYPE_INTEGER, '10', null, XMLDB_NOTNULL, null, null);
+        $table->add_field('origin_course_id', XMLDB_TYPE_INTEGER, '10', null, XMLDB_NOTNULL, null, null);
+        $table->add_field('origin_course_name', XMLDB_TYPE_CHAR, '254', null, null, null, null);
+        $table->add_field('priority', XMLDB_TYPE_INTEGER, '10', null, XMLDB_NOTNULL, null, '0');
+        $table->add_field('status', XMLDB_TYPE_CHAR, '20', null, XMLDB_NOTNULL, null, 'pending');
+        $table->add_field('attempts', XMLDB_TYPE_INTEGER, '10', null, XMLDB_NOTNULL, null, '0');
+        $table->add_field('max_attempts', XMLDB_TYPE_INTEGER, '10', null, XMLDB_NOTNULL, null, '3');
+        $table->add_field('processing_started', XMLDB_TYPE_INTEGER, '10', null, null, null, null);
+        $table->add_field('processing_completed', XMLDB_TYPE_INTEGER, '10', null, null, null, null);
+        $table->add_field('error_message', XMLDB_TYPE_TEXT, null, null, null, null, null);
+        $table->add_field('timecreated', XMLDB_TYPE_INTEGER, '10', null, XMLDB_NOTNULL, null, null);
+        $table->add_field('timemodified', XMLDB_TYPE_INTEGER, '10', null, XMLDB_NOTNULL, null, null);
+
+        // Adding keys to table.
+        $table->add_key('primary', XMLDB_KEY_PRIMARY, ['id']);
+        $table->add_key('requestid', XMLDB_KEY_FOREIGN, ['requestid'], 'local_coursetransfer_request', ['id']);
+
+        // Adding indexes to table.
+        // Note: status index removed - CHAR fields can cause "text column comparison" errors in strict MySQL
+        $table->add_index('priority_created', XMLDB_INDEX_NOTUNIQUE, ['priority', 'timecreated']);
+
+        // Conditionally launch create table.
+        if (!$dbman->table_exists($table)) {
+            $dbman->create_table($table);
+            mtrace("Created table local_coursetransfer_queue for sequential restore processing");
+        }
+
+        // Coursetransfer savepoint reached.
+        upgrade_plugin_savepoint(true, 2025010701, 'local', 'coursetransfer');
+    }
+
+    // Add configuration field to request table for queue processing.
+    if ($oldversion < 2025010702) {
+        
+        $table = new xmldb_table('local_coursetransfer_request');
+        $field = new xmldb_field('configuration', XMLDB_TYPE_TEXT, null, null, null, null, null, 'error_message');
+        
+        // Conditionally launch add field configuration.
+        if (!$dbman->field_exists($table, $field)) {
+            $dbman->add_field($table, $field);
+            mtrace("Added configuration field to local_coursetransfer_request table");
+        }
+        
+        // Coursetransfer savepoint reached.
+        upgrade_plugin_savepoint(true, 2025010702, 'local', 'coursetransfer');
+    }
+
+    // Remove problematic status index from queue table (MySQL strict mode issue).
+    if ($oldversion < 2025010707) {
+        
+        $table = new xmldb_table('local_coursetransfer_queue');
+        $index = new xmldb_index('status', XMLDB_INDEX_NOTUNIQUE, ['status']);
+        
+        // Conditionally drop the index if it exists.
+        if ($dbman->index_exists($table, $index)) {
+            $dbman->drop_index($table, $index);
+            mtrace("Dropped problematic status index from local_coursetransfer_queue table");
+        }
+        
+        // Coursetransfer savepoint reached.
+        upgrade_plugin_savepoint(true, 2025010707, 'local', 'coursetransfer');
+    }
+
     return true;
 }

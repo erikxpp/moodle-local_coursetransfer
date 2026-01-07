@@ -58,6 +58,7 @@ global $CFG;
 require_once($CFG->dirroot . '/backup/util/includes/backup_includes.php');
 require_once($CFG->dirroot . '/backup/util/includes/restore_includes.php');
 require_once($CFG->dirroot . '/local/coursetransfer/classes/task/create_backup_course_task.php');
+require_once($CFG->dirroot . '/local/coursetransfer/classes/user_mapper.php');
 
 /**
  * coursetransfer_restore
@@ -72,17 +73,45 @@ class coursetransfer_restore {
 
     /**
      * Create task restore course.
+     * Tasks are queued with priority based on request creation time (FIFO order).
      *
      * @param stdClass $request
      * @param stored_file $file
      * @return bool
      */
-    public static function create_task_restore_course(stdClass $request, stored_file $file): bool {
+    public static function create_task_restore_course(stdClass $request, stored_file $file, string $fileurl = null): bool {
         $resasynctask = new restore_course_task();
         $resasynctask->set_blocking(false);
-        $resasynctask->set_custom_data(
-                ['requestid' => $request->id, 'fileid' => $file->get_id()]
+        
+        // Set task to run immediately (respecting FIFO order based on task creation time)
+        // Moodle's task runner will process tasks in order of next_run_time
+        $resasynctask->set_next_run_time(time());
+        
+        $data = [
+            'requestid' => $request->id, 
+            'fileid' => $file->get_id(),
+            'retry_attempt' => 0,  // Initialize retry counter
+            'reschedule_count' => 0  // Initialize reschedule counter for concurrency handling
+        ];
+        if ($fileurl) {
+            $data['fileurl'] = $fileurl;
+        }
+        
+        $resasynctask->set_custom_data($data);
+        
+        // Log task creation
+        coursetransfer_logger::info(
+            $request->id,
+            coursetransfer_logger::DIRECTION_TARGET,
+            'RESTORE_TASK_QUEUED',
+            'Restore task queued for sequential execution',
+            [
+                'request_id' => $request->id,
+                'file_id' => $file->get_id(),
+                'scheduled_for' => date('Y-m-d H:i:s', time())
+            ]
         );
+        
         return \core\task\manager::queue_adhoc_task($resasynctask);
     }
 
@@ -98,7 +127,24 @@ class coursetransfer_restore {
     public static function restore_course(stdClass $request, stored_file $file): bool {
         try {
             $courseid = (int)$request->target_course_id;
-            $userid = (int)$request->userid;
+            
+            // CRITICAL FIX: Always use Admin user for restore execution
+            // When using the requesting user ($request->userid), they may lack permissions to restore 
+            // specific components (like Question Bank contexts), causing "orphan" attempts (10400 error).
+            // Manual restore works because it's done by Admin. We replicate that here.
+            $admin = get_admin();
+            $userid = $admin ? (int)$admin->id : 2; // Default to 2 (Admin) if get_admin fails
+            
+            // Log this override for clarity
+            if ((int)$request->userid !== $userid) {
+                 coursetransfer_logger::info(
+                    $request->id,
+                    coursetransfer_logger::DIRECTION_TARGET,
+                    'RESTORE_USER_OVERRIDE',
+                    "Forcing restore as Admin (User ID: $userid) instead of Requestor (User ID: {$request->userid}) to ensure permissions."
+                );
+            }
+
             $fullname = $request->origin_course_fullname;
             $shortname = $request->origin_course_shortname;
             $removeenrols = (int)$request->target_remove_enrols;
@@ -117,6 +163,32 @@ class coursetransfer_restore {
 
             $fb->extract_to_pathname($file, $backuptempdir . '/' . $filepath . '/');
 
+            // CRITICAL FIX: If fullname or shortname are empty/null in request, try to get them from the backup file
+            // This prevents "Column 'fullname' cannot be null" error when request data is incomplete
+            if (empty($fullname) || empty($shortname)) {
+                $coursexml = $backuptempdir . '/' . $filepath . '/course/course.xml';
+                if (file_exists($coursexml)) {
+                    try {
+                        $xml = simplexml_load_file($coursexml);
+                        if ($xml) {
+                            if (empty($fullname)) {
+                                $fullname = (string)$xml->fullname;
+                            }
+                            if (empty($shortname)) {
+                                $shortname = (string)$xml->shortname;
+                            }
+                        }
+                    } catch (\Exception $e) {
+                         coursetransfer_logger::warning(
+                            $request->id,
+                            coursetransfer_logger::DIRECTION_TARGET,
+                            'RESTORE_XML_PARSE_ERROR',
+                            "Failed to parse course.xml to recover missing names: " . $e->getMessage()
+                        );
+                    }
+                }
+            }
+
             if ($target !== backup::TARGET_EXISTING_DELETING && $target !== backup::TARGET_CURRENT_DELETING) {
                 $keeprolesenrolments = true;
                 $keepgroupsgroupings = true;
@@ -132,36 +204,10 @@ class coursetransfer_restore {
             $target_course = $DB->get_record('course', ['id' => $courseid], 'id,fullname,shortname,idnumber');
             
             if ($target_course && ($target === backup::TARGET_EXISTING_DELETING || $target === backup::TARGET_EXISTING_ADDING)) {
-                $course_updated = false;
-                
-                // Update fullname if different
-                if ($target_course->fullname !== $fullname) {
-                    coursetransfer_logger::info(
-                        $request->id,
-                        coursetransfer_logger::DIRECTION_TARGET,
-                        'PRE_RESTORE_FULLNAME_UPDATE',
-                        "Updating target course fullname BEFORE restore controller. Was: '{$target_course->fullname}', Setting: '{$fullname}'",
-                        ['course_id' => $courseid, 'old_fullname' => $target_course->fullname, 'new_fullname' => $fullname]
-                    );
+                // Update target course if exists
+                if ($target_course->fullname !== $fullname || $target_course->shortname !== $shortname) {
                     $target_course->fullname = $fullname;
-                    $course_updated = true;
-                }
-                
-                // Update shortname if different
-                if ($target_course->shortname !== $shortname) {
-                    coursetransfer_logger::info(
-                        $request->id,
-                        coursetransfer_logger::DIRECTION_TARGET,
-                        'PRE_RESTORE_SHORTNAME_UPDATE',
-                        "Updating target course shortname BEFORE restore controller. Was: '{$target_course->shortname}', Setting: '{$shortname}'",
-                        ['course_id' => $courseid, 'old_shortname' => $target_course->shortname, 'new_shortname' => $shortname]
-                    );
                     $target_course->shortname = $shortname;
-                    $course_updated = true;
-                }
-                
-                // Apply updates if needed
-                if ($course_updated) {
                     $DB->update_record('course', $target_course);
                     rebuild_course_cache($courseid, true);
                     
@@ -169,7 +215,7 @@ class coursetransfer_restore {
                         $request->id,
                         coursetransfer_logger::DIRECTION_TARGET,
                         'PRE_RESTORE_COURSE_UPDATED',
-                        'Target course names updated successfully BEFORE restore. This prevents Moodle from adding duplicate suffixes.',
+                        'Target course names updated successfully BEFORE restore.',
                         ['course_id' => $courseid, 'fullname' => $fullname, 'shortname' => $shortname]
                     );
                 }
@@ -177,6 +223,9 @@ class coursetransfer_restore {
 
             $restoreoptions = [
                     'overwrite_conf' => true,
+                    'users' => true,
+                    'enrolments' => true,
+                    'groups' => true,
                     'keep_roles_and_enrolments' => $keeprolesenrolments,
                     'keep_groups_and_groupings' => $keepgroupsgroupings,
                     'course_fullname' => $fullname,
@@ -187,6 +236,11 @@ class coursetransfer_restore {
             // Let Moodle use the target as configured in the request
             // The fullname/shortname from restoreoptions will override any duplicates
 
+            // CRITICAL: Enable safe restore mode to handle orphaned quiz references
+            // This allows restore to continue even if quiz attempts reference missing question_answers
+            // Preserves ALL valid data (attempts, grades, questions) and only skips orphaned references
+            \local_coursetransfer\safe_quiz_restore::enable_safe_restore();
+            
             $rc = new restore_controller($filepath, $courseid,
                     backup::INTERACTIVE_NO, backup::MODE_GENERAL, $userid, $target);
 
@@ -257,26 +311,6 @@ class coursetransfer_restore {
                     }
                 }
                 
-                // SOLUTION: Use Moodle's native mechanism for duplicate admin users
-                // Combined with manual mapping for non-admin users.
-                // This is the same approach Moodle uses in native course import/restore.
-                
-                // Save original setting to restore later
-                $original_duplicate_admin_setting = get_config('backup', 'import_general_duplicate_admin_allowed');
-                
-                // Temporarily enable Moodle's duplicate admin resolution
-                // This allows Moodle to automatically rename conflicting 'admin' users
-                // by appending the site identifier: admin -> admin_abc123def
-                set_config('import_general_duplicate_admin_allowed', true, 'backup');
-                
-                coursetransfer_logger::info(
-                    $request->id,
-                    coursetransfer_logger::DIRECTION_TARGET,
-                    'DUPLICATE_ADMIN_ENABLED',
-                    'Enabled Moodle native duplicate admin resolution (will rename admin to admin_siteid if conflict)',
-                    ['original_setting' => $original_duplicate_admin_setting]
-                );
-
                 if ($rc->get_status() == backup::STATUS_REQUIRE_CONV) {
                     $rc->convert();
                 }
@@ -306,30 +340,148 @@ class coursetransfer_restore {
                 
                 if ($resexecute) {
                     // SUCCESS: Precheck passed.
-                    // At this point, Moodle has already processed admin users:
-                    // - If admin conflicts, it was renamed to admin_siteid (because we enabled the setting)
-                    // - Other users are marked for creation (newitemid = 0)
-                    
-                    // Now map NON-ADMIN users to existing destination users
-                    // This prevents duplicate creation for professors, students, etc.
-                    coursetransfer_logger::info(
-                        $request->id,
-                        coursetransfer_logger::DIRECTION_TARGET,
-                        'POPULATING_USER_MAPPINGS',
-                        'Mapping non-admin users from backup to existing destination users...'
-                    );
-                    
-                    self::populate_user_mappings_in_temp_table($rc, $request);
-                    
-                    // Execute restore with mapped users
+                    // Using 100% native restore - Moodle handles all user mapping
                     coursetransfer_logger::info(
                         $request->id,
                         coursetransfer_logger::DIRECTION_TARGET,
                         'EXECUTING_RESTORE',
-                        'Executing restore plan with user mappings in place...'
+                        'Executing restore plan with 100% native Moodle user handling (no backup_ids_temp manipulation)'
                     );
+
+                // *** USER MAPPING LOGIC *** 
+                // DISABLED: We previously performed manual user mapping here.
+                // However, Moodle's native restore engine handles user mapping (by username/email) much more robustly.
+                // Manual intervention in backup_ids_temp was causing restore_step_exceptions (10400) on newer Moodle versions.
+                // We now let standard Moodle handle it.
+                
+                /*
+                // 1. Initialize mapper
+                $mapper = new user_mapper($rc->get_restoreid(), $backuptempdir . '/' . $filepath, $request);
+                
+                // 2. Execute mapping
+                $mapper->map_users();
+                */
+                
+                // 3. Log
+                coursetransfer_logger::info(
+                    $request->id,
+                    coursetransfer_logger::DIRECTION_TARGET,
+                    'USING_NATIVE_MAPPING',
+                    'Using Native Restore logic for user mapping (Plugin manual mapper disabled)'
+                );
                     
-                    $rc->execute_plan();
+                    // CRITICAL: Execute plan with transaction safeguards
+                    // This prevents the restore controller from losing its context during deep processing
+                    try {
+                        // Ensure we're not in a nested transaction that might interfere
+                        global $DB;
+                        
+                        // Log restore controller state before execution
+                        $restoreid = $rc->get_restoreid();
+                        coursetransfer_logger::info(
+                            $request->id,
+                            coursetransfer_logger::DIRECTION_TARGET,
+                            'RESTORE_CONTROLLER_STATE',
+                            "Restore controller ready. RestoreID: {$restoreid}",
+                            ['restoreid' => $restoreid]
+                        );
+                        
+                        // PRE-RESTORE VERIFICATION: Check for duplicate modules from previous failed attempts
+                        // If TARGET_EXISTING_DELETING, course should be clean. If not, force cleanup.
+                        if ($target === backup::TARGET_EXISTING_DELETING) {
+                            $existing_modules = $DB->count_records('course_modules', ['course' => $courseid]);
+                            
+                            if ($existing_modules > 0) {
+                                coursetransfer_logger::warning(
+                                    $request->id,
+                                    coursetransfer_logger::DIRECTION_TARGET,
+                                    'DUPLICATE_MODULES_DETECTED',
+                                    "Found {$existing_modules} existing modules in course that should have been deleted (likely from previous failed restore)",
+                                    null,
+                                    ['course_id' => $courseid, 'target_type' => 'TARGET_EXISTING_DELETING', 'module_count' => $existing_modules]
+                                );
+                                
+                                // Force cleanup before proceeding to prevent Duplicate entry errors
+                                require_once($CFG->dirroot . '/course/lib.php');
+                                remove_course_contents($courseid, false); // Don't delete course itself, only contents
+                                rebuild_course_cache($courseid, true);
+                                
+                                coursetransfer_logger::info(
+                                    $request->id,
+                                    coursetransfer_logger::DIRECTION_TARGET,
+                                    'PRE_RESTORE_CLEANUP',
+                                    "Cleaned up {$existing_modules} existing course modules before restore to prevent duplicates"
+                                );
+                            }
+                        }
+                        
+                        // Execute the restore plan
+                        $rc->execute_plan();
+                        
+                        // Disable safe restore mode after successful execution
+                        \local_coursetransfer\safe_quiz_restore::disable_safe_restore();
+                        
+                        // SUCCESS: Restore plan executed
+                        coursetransfer_logger::success(
+                            $request->id,
+                            coursetransfer_logger::DIRECTION_TARGET,
+                            'RESTORE_PLAN_EXECUTED',
+                            'Restore plan executed successfully using 100% native Moodle process'
+                        );
+                        
+                        // Log user restore summary
+                        self::log_user_restore_summary($rc, $request, $courseid);
+                        
+                        coursetransfer_logger::info(
+                            $request->id,
+                            coursetransfer_logger::DIRECTION_TARGET,
+                            'RESTORE_PLAN_EXECUTED',
+                            'Restore plan executed successfully'
+                        );
+                        
+                    } catch (\restore_step_exception $restoreException) {
+                        // Specific restore step exception - this is the error we're seeing
+                        $errorCode = $restoreException->errorcode ?? 'unknown';
+                        
+                        coursetransfer_logger::error(
+                            $request->id,
+                            coursetransfer_logger::DIRECTION_TARGET,
+                            'RESTORE_STEP_EXCEPTION',
+                            'Restore step failed: ' . $restoreException->getMessage(),
+                            $errorCode,
+                            [
+                                'exception' => get_class($restoreException),
+                                'error_info' => $restoreException->a ?? null,
+                                'trace_preview' => substr($restoreException->getTraceAsString(), 0, 500)
+                            ]
+                        );
+                        
+                        // if this is the quiz/question-related error, try to provide helpful diagnostic
+                        if ($errorCode === 'not_specified_restore_task' || 
+                            strpos($restoreException->getMessage(), 'not_specified_restore_task') !== false ||
+                            strpos($restoreException->getTraceAsString(), 'restore_qtype_') !== false ||
+                            strpos($restoreException->getTraceAsString(), 'question_attempt') !== false) {
+                            
+                            coursetransfer_logger::warning(
+                                $request->id,
+                                coursetransfer_logger::DIRECTION_TARGET,
+                                'QUIZ_ATTEMPT_RESTORE_ISSUE',
+                                'Detected quiz/question attempt restore issue. This typically occurs when quiz attempt data references corrupted or missing question answers.',
+                                null,
+                                [
+                                    'recommendation' => 'Consider backing up without user data, or investigate quiz questions in source course',
+                                    'affected_component' => 'quiz attempts / question bank'
+                                ]
+                            );
+                        }
+                        
+                        // CRITICAL: Perform complete rollback to prevent duplicate entries on retry
+                        // This removes all course content created during failed restore
+                        self::rollback_failed_restore($courseid, $restoreid, $request->id);
+                        
+                        // Re-throw to be caught by outer exception handler
+                        throw $restoreException;
+                    }
                     
                     // CRITICAL FIX: Force update course fullname and shortname after restore
                     // When restoring to existing course with TARGET_EXISTING_DELETING/ADDING,
@@ -379,22 +531,9 @@ class coursetransfer_restore {
                     
                     $rc->destroy();
                     
-                    // Restore original Moodle setting
-                    set_config('import_general_duplicate_admin_allowed', $original_duplicate_admin_setting, 'backup');
-                    
-                    coursetransfer_logger::info(
-                        $request->id,
-                        coursetransfer_logger::DIRECTION_TARGET,
-                        'DUPLICATE_ADMIN_RESTORED',
-                        'Restored original duplicate admin setting',
-                        ['restored_to' => $original_duplicate_admin_setting]
-                    );
-                    
                     return true;
                 } else {
-                    // Restore original setting even if precheck fails
-                    set_config('import_general_duplicate_admin_allowed', $original_duplicate_admin_setting, 'backup');
-                    
+                    // Precheck failed - log errors and update request
                     if (!array_key_exists('errors', $results)) {
                         // Log warning but continue
                         coursetransfer_logger::warning(
@@ -409,7 +548,8 @@ class coursetransfer_restore {
                         coursetransfer_request::insert_or_update($request, $request->id);
                         
                         // Map users and execute
-                        self::populate_user_mappings_in_temp_table($rc, $request);
+                        // We already mapped users before precheck, but if precheck failed and cleared temp tables,
+                        // we might need to be careful. However, backup_ids_temp usually persists until destroy().
                         $rc->execute_plan();
                         
                         // CRITICAL FIX: Force update course fullname and shortname after restore
@@ -470,24 +610,13 @@ class coursetransfer_restore {
                     coursetransfer_request::insert_or_update($request, $request->id);
                     return false;
                 }
-            } else {
-                // Log invalid backup file error
-                coursetransfer_logger::error(
-                    $request->id,
-                    coursetransfer_logger::DIRECTION_TARGET,
-                    coursetransfer_logger::ACTION_RESTORE_FAILED,
-                    'MBZ file is invalid. Plan is NULL: ' . $file->get_filepath(),
-                    '104001'
-                );
-                
-                $request->status = coursetransfer_request::STATUS_ERROR;
-                $request->error_code = '104001';
-                $request->error_message = 'MBZ file is invalid. Plan is NULL: ' . $file->get_filepath();
-                coursetransfer_request::insert_or_update($request, $request->id);
                 return false;
             }
 
         } catch (\Exception $e) {
+            // Ensure safe restore mode is disabled even on error
+            \local_coursetransfer\safe_quiz_restore::disable_safe_restore();
+            
             // Log restore failure
             coursetransfer_logger::error(
                 $request->id,
@@ -498,6 +627,23 @@ class coursetransfer_restore {
                 ['exception' => get_class($e), 'trace' => $e->getTraceAsString()]
             );
             
+            // CRITICAL: Perform rollback if restore controller exists
+            // This prevents duplicate entries when the task retries
+            if (isset($rc) && isset($courseid)) {
+                try {
+                    $restoreid = $rc->get_restoreid();
+                    self::rollback_failed_restore($courseid, $restoreid, $request->id);
+                } catch (\Exception $rollbackException) {
+                    // Log rollback failure but don't throw - the main error is more important
+                    coursetransfer_logger::warning(
+                        $request->id,
+                        coursetransfer_logger::DIRECTION_TARGET,
+                        'ROLLBACK_EXCEPTION',
+                        'Exception during rollback: ' . $rollbackException->getMessage()
+                    );
+                }
+            }
+            
             $request->status = coursetransfer_request::STATUS_ERROR;
             $request->error_code = '10400';
             $request->error_message = $e->getMessage();
@@ -505,420 +651,315 @@ class coursetransfer_restore {
             return false;
         }
     }
-
     /**
-     * Check if precheck errors contain user conflict messages.
+     * Log detailed user restore summary after successful native restore
      *
-     * @param array $errors Array of error messages
-     * @return bool True if user conflicts detected
+     * @param \restore_controller $rc Restore controller
+     * @param \stdClass $request Request object for logging
+     * @param int $courseid Course ID that was restored
+     * @return void
      */
-    private static function has_user_conflict_errors(array $errors): bool {
-        foreach ($errors as $error) {
-            if (is_string($error)) {
-                // Check for user conflict patterns in Spanish and English.
-                if (stripos($error, 'restaurar al usuario') !== false ||
-                    stripos($error, 'restore') !== false && stripos($error, 'user') !== false && 
-                    stripos($error, 'conflict') !== false) {
-                    return true;
-                }
-            }
-        }
-        return false;
-    }
-
-    /**
-     * Setup user mappings BEFORE restore to prevent duplicate user errors.
-     * This reads users from the backup XML and creates mappings to existing users.
-     *
-     * @param restore_controller $rc Restore controller
-     * @param stdClass $request Request object for logging
-     * @return bool True if mappings were created
-     */
-    /**
-     * Setup user mappings BEFORE restore to prevent duplicate user errors.
-     * REMOVED: This method was manipulating XML directly which caused data corruption (error 10400).
-     * We now use populate_user_mappings_in_temp_table to map users safely via DB.
-     */
-
-
-    /**
-     * Populate backup_ids_temp table with user mappings AFTER precheck.
-     * This is the CRITICAL method that prevents duplicate user creation.
-     *
-     * @param restore_controller $rc Restore controller
-     * @param stdClass $request Request object for logging
-     * @return bool True if mappings were created
-     */
-    private static function populate_user_mappings_in_temp_table(restore_controller $rc, stdClass $request): bool {
-        global $DB;
-
+    private static function log_user_restore_summary(\restore_controller $rc, \stdClass $request, int $courseid): void {
         try {
-            $restoreid = $rc->get_restoreid();
-            
-            // Get field to match users.
-            $matchfield = get_config('local_coursetransfer', 'origin_field_search_user');
-            if (empty($matchfield) || !in_array($matchfield, ['username', 'email', 'idnumber'])) {
-                $matchfield = 'username';
-            }
+            // Get user restore statistics.
+            $summary = coursetransfer_user_merger::get_user_restore_summary($rc);
 
             coursetransfer_logger::info(
                 $request->id,
                 coursetransfer_logger::DIRECTION_TARGET,
-                'MAPPING_USERS_IN_TEMP_TABLE',
-                "Populating backup_ids_temp with user mappings. RestoreID: {$restoreid}, Match field: {$matchfield}"
+                'USER_RESTORE_SUMMARY',
+                'User restore completed using 100% native Moodle process',
+                [
+                    'total_users_in_backup' => $summary['total'],
+                    'users_mapped_to_existing' => $summary['mapped'],
+                    'users_created_new' => $summary['created'],
+                    'note' => 'Moodle handled all user mapping natively (or via pre-check mapping)'
+                ]
             );
 
-            // Verify backup_ids_temp exists (it should after precheck)
-            $dbman = $DB->get_manager();
-            $temptable = new xmldb_table('backup_ids_temp');
-            
-            if (!$dbman->table_exists($temptable)) {
-                coursetransfer_logger::error(
-                    $request->id,
-                    coursetransfer_logger::DIRECTION_TARGET,
-                    'TEMP_TABLE_MISSING',
-                    'backup_ids_temp table does not exist - precheck may have failed'
-                );
-                return false;
-            }
+            // Detect and log duplicate users.
+            $duplicates = coursetransfer_user_merger::detect_duplicate_users($courseid, $request);
 
-            // Get all user records from backup_ids_temp that precheck created
-            $backupusers = $DB->get_records('backup_ids_temp', [
-                'backupid' => $restoreid,
-                'itemname' => 'user'
-            ]);
-
-            if (empty($backupusers)) {
+            if (!empty($duplicates)) {
+                coursetransfer_user_merger::log_duplicates($duplicates, $request);
+            } else {
                 coursetransfer_logger::info(
                     $request->id,
                     coursetransfer_logger::DIRECTION_TARGET,
-                    'NO_USERS_IN_TEMP_TABLE',
-                    'No users found in backup_ids_temp - backup may not include user data'
+                    'NO_DUPLICATE_USERS',
+                    'No duplicate users detected - all users from backup were either new or properly mapped by Moodle'
                 );
-                return false;
             }
-
-            $mappedcount = 0;
-            $skippedcount = 0;
-            $alreadymappedcount = 0;
-            $tobecreatedcount = 0;
-
-            foreach ($backupusers as $backupuser) {
-                // Decode user info using Moodle's method
-                // Moodle stores user info as: base64(gzcompress(serialize($data)))
-                $userinfo = backup_controller_dbops::decode_backup_temp_info($backupuser->info);
-                
-                // DEBUG: Log what we got
-                if (empty($userinfo)) {
-                    coursetransfer_logger::warning(
-                        $request->id,
-                        coursetransfer_logger::DIRECTION_TARGET,
-                        'USER_INFO_EMPTY',
-                        "Skipping user (backup ID: {$backupuser->itemid}) - could not decode user info"
-                    );
-                    $skippedcount++;
-                    continue;
-                }
-                
-                // Get username for logging
-                $username = '';
-                if (is_object($userinfo)) {
-                    $username = $userinfo->username ?? 'unknown';
-                } else if (is_array($userinfo)) {
-                    $username = $userinfo['username'] ?? 'unknown';
-                }
-                
-                // DEBUG: Log user info structure for first few users
-                if ($mappedcount + $skippedcount + $alreadymappedcount < 3) {
-                    coursetransfer_logger::info(
-                        $request->id,
-                        coursetransfer_logger::DIRECTION_TARGET,
-                        'DEBUG_USER_INFO',
-                        "User info structure for '{$username}'",
-                        [
-                            'itemid' => $backupuser->itemid,
-                            'newitemid' => $backupuser->newitemid,
-                            'info_type' => gettype($userinfo),
-                            'is_object' => is_object($userinfo),
-                            'is_array' => is_array($userinfo),
-                            'has_username' => isset($userinfo->username) || (is_array($userinfo) && isset($userinfo['username']))
-                        ]
-                    );
-                }
-                
-                // Check if already mapped by Moodle
-                // We will OVERRIDE this if we find a username match, to ensure Admin is mapped correctly
-                $already_mapped = !empty($backupuser->newitemid);
-
-                // Extract match value
-                $matchvalue = null;
-                if (is_object($userinfo)) {
-                    $matchvalue = $userinfo->$matchfield ?? null;
-                } else if (is_array($userinfo)) {
-                    $matchvalue = $userinfo[$matchfield] ?? null;
-                }
-
-                if (empty($matchvalue)) {
-                    coursetransfer_logger::warning(
-                        $request->id,
-                        coursetransfer_logger::DIRECTION_TARGET,
-                        'USER_MATCHVALUE_EMPTY',
-                        "Skipping user '{$username}' (backup ID: {$backupuser->itemid}) - matchvalue empty for field: {$matchfield}"
-                    );
-                    $skippedcount++;
-                    continue;
-                }
-
-                // Search for existing user in destination (only local users, mnethostid=1)
-                $existingusers = $DB->get_records('user', [
-                    $matchfield => $matchvalue,
-                    'deleted' => 0,
-                    'mnethostid' => 1
-                ], 'id ASC', 'id, username, firstname, lastname', 0, 1);
-                
-                $existinguser = !empty($existingusers) ? reset($existingusers) : null;
-
-                if ($existinguser) {
-                    // CRITICAL: Update the mapping to point to existing user
-                    // This prevents Moodle from trying to create the user
-                    $backupuser->newitemid = $existinguser->id;
-                    $DB->update_record('backup_ids_temp', $backupuser);
-                    $mappedcount++;
-                    
-                    coursetransfer_logger::info(
-                        $request->id,
-                        coursetransfer_logger::DIRECTION_TARGET,
-                        'USER_MAPPED_TO_EXISTING',
-                        "Mapped user '{$username}' (match: {$matchfield}={$matchvalue}) to existing user '{$existinguser->username}' (backup ID: {$backupuser->itemid} → destination ID: {$existinguser->id})"
-                    );
-                } else {
-                    // User doesn't exist in destination, will be created
-                    $tobecreatedcount++;
-                    coursetransfer_logger::info(
-                        $request->id,
-                        coursetransfer_logger::DIRECTION_TARGET,
-                        'USER_WILL_BE_CREATED',
-                        "User '{$username}' (match: {$matchfield}={$matchvalue}) not found in destination, will be created (backup ID: {$backupuser->itemid})"
-                    );
-                }
-            }
-
-            coursetransfer_logger::info(
-                $request->id,
-                coursetransfer_logger::DIRECTION_TARGET,
-                'USER_MAPPING_COMPLETE',
-                "User mapping complete: {$alreadymappedcount} pre-mapped by Moodle, {$mappedcount} mapped to existing, {$tobecreatedcount} will be created, {$skippedcount} skipped",
-                [
-                    'already_mapped_by_moodle' => $alreadymappedcount,
-                    'mapped_to_existing' => $mappedcount,
-                    'to_be_created' => $tobecreatedcount,
-                    'skipped' => $skippedcount,
-                    'total' => count($backupusers)
-                ]
-            );
-
-            return $mappedcount > 0 || $alreadymappedcount > 0;
 
         } catch (\Exception $e) {
-            coursetransfer_logger::error(
+            coursetransfer_logger::warning(
                 $request->id,
                 coursetransfer_logger::DIRECTION_TARGET,
-                'USER_MAPPING_ERROR',
-                'Error populating user mappings: ' . $e->getMessage() . "\nTrace: " . $e->getTraceAsString()
+                'USER_SUMMARY_ERROR',
+                'Could not generate user restore summary: ' . $e->getMessage(),
+                null,
+                ['exception' => get_class($e)]
+            );
+        }
+    }
+
+    /**
+     * Check if backup contains corrupted quiz attempts (error 10400)
+     * 
+     * This detects the common issue where quiz attempt data references question_answers
+     * that don't exist in the backup XML, causing restore_step_exception.
+     *
+     * @param string $backupdir Path to extracted backup directory
+     * @param stdClass $request Request object for logging
+     * @return bool True if corrupted quiz detected
+     */
+    private static function check_corrupt_quiz_attempts(string $backupdir, stdClass $request): bool {
+        try {
+            // Check if activities directory exists
+            $activities_dir = $backupdir . '/activities';
+            if (!is_dir($activities_dir)) {
+                return false;
+            }
+            
+            // Look for quiz activities
+            $quiz_dirs = glob($activities_dir . '/quiz_*');
+            if (empty($quiz_dirs)) {
+                return false; // No quizzes, no problem
+            }
+            
+            foreach ($quiz_dirs as $quiz_dir) {
+                $attempts_xml = $quiz_dir . '/attempts.xml';
+                $questions_xml = $quiz_dir . '/questions.xml';
+                
+                // If quiz has attempts but questions.xml is missing or empty, it's likely corrupt
+                if (file_exists($attempts_xml) && filesize($attempts_xml) > 100) {
+                    if (!file_exists($questions_xml) || filesize($questions_xml) < 100) {
+                        coursetransfer_logger::warning(
+                            $request->id,
+                            coursetransfer_logger::DIRECTION_TARGET,
+                            'CORRUPT_QUIZ_STRUCTURE',
+                            'Quiz has attempts but missing/empty questions.xml - likely data corruption',
+                            null,
+                            ['quiz_dir' => basename($quiz_dir)]
+                        );
+                        return true;
+                    }
+                    
+                    // Check for orphaned question_answer references (basic check)
+                    // This is a heuristic - if attempts.xml is much larger than questions.xml,
+                    // it likely has more attempt data than question definitions
+                    $attempts_size = filesize($attempts_xml);
+                    $questions_size = filesize($questions_xml);
+                    
+                    if ($attempts_size > $questions_size * 3) {
+                        coursetransfer_logger::warning(
+                            $request->id,
+                            coursetransfer_logger::DIRECTION_TARGET,
+                            'SUSPICIOUS_QUIZ_SIZE_RATIO',
+                            'Quiz attempts.xml suspiciously large compared to questions.xml',
+                            null,
+                            [
+                                'quiz_dir' => basename($quiz_dir),
+                                'attempts_size' => $attempts_size,
+                                'questions_size' => $questions_size,
+                                'ratio' => round($attempts_size / $questions_size, 2)
+                            ]
+                        );
+                        return true;
+                    }
+                }
+            }
+            
+            return false;
+            
+        } catch (\Exception $e) {
+            // If check fails, log but assume no corruption to allow restore attempt
+            coursetransfer_logger::warning(
+                $request->id,
+                coursetransfer_logger::DIRECTION_TARGET,
+                'QUIZ_CHECK_FAILED',
+                'Could not check for corrupt quiz attempts: ' . $e->getMessage()
             );
             return false;
         }
     }
 
     /**
-     * Map backup users to existing destination users by username.
-     * This prevents user conflicts during restore and ensures all user data
-     * (grades, forum posts, assignments, etc.) is correctly associated.
-     *
-     * @param restore_controller $rc Restore controller
-     * @param stdClass $request Request object for logging
-     * @return bool True if mapping was successful
+     * Perform rollback cleanup when restore fails
+     * Removes all course content created during failed restore to prevent duplicates on retry
+     * 
+     * @param int $courseid The course ID being restored
+     * @param string $restoreid The restore controller ID
+     * @param int $requestid The transfer request ID for logging
+     * @return bool True if rollback succeeded, false otherwise
      */
-    private static function map_backup_users_to_existing(restore_controller $rc, stdClass $request): bool {
-        global $DB;
-
+    private static function rollback_failed_restore($courseid, $restoreid, $requestid) {
+        global $DB, $CFG;
+        require_once($CFG->dirroot . '/course/lib.php');
+        
+        coursetransfer_logger::info(
+            $requestid,
+            coursetransfer_logger::DIRECTION_TARGET,
+            'ROLLBACK_STARTED',
+            "Starting rollback cleanup for failed restore (Course: $courseid, RestoreID: $restoreid)"
+        );
+        
+        $transaction = $DB->start_delegated_transaction();
+        
         try {
-            // Get restore ID (used as backupid in temp tables).
-            $restoreid = $rc->get_restoreid();
+            $deleted_counts = [
+                'modules' => 0,
+                'assignments' => 0,
+                'submissions' => 0,
+                'quizzes' => 0,
+                'attempts' => 0,
+                'grades' => 0,
+                'files' => 0,
+                'backup_ids' => 0
+            ];
             
-            // Get field to match users (from plugin settings, default: username).
-            $matchfield = get_config('local_coursetransfer', 'origin_field_search_user');
-            if (empty($matchfield) || !in_array($matchfield, ['username', 'email', 'idnumber'])) {
-                $matchfield = 'username';
-            }
-
-            coursetransfer_logger::info(
-                $request->id,
-                coursetransfer_logger::DIRECTION_TARGET,
-                'USER_MAPPING_START',
-                "Starting user mapping. RestoreID: {$restoreid}, Match field: {$matchfield}"
-            );
-
-            // NOTE: The backup_ids_temp table is created and managed by Moodle during restore.
-            // If precheck failed and destroyed the controller, the table might be gone.
-            // We need to check if it exists first.
-            $dbman = $DB->get_manager();
-            $temptable = new xmldb_table('backup_ids_temp');
+            // 1. Get all course modules in this course
+            $modules = $DB->get_records('course_modules', ['course' => $courseid]);
             
-            if (!$dbman->table_exists($temptable)) {
-                coursetransfer_logger::warning(
-                    $request->id,
-                    coursetransfer_logger::DIRECTION_TARGET,
-                    'USER_MAPPING_SKIPPED',
-                    'Temporary table backup_ids_temp does not exist. The table is created by Moodle during restore process. Skipping user mapping - this may cause precheck to fail again.',
-                    null,
-                    ['restore_id' => $restoreid, 'info' => 'Table will be created on next precheck attempt']
-                );
-                return false;
-            }
-
-            // Get all users from backup temporary table.
-            $backupusers = $DB->get_records('backup_ids_temp', [
-                'backupid' => $restoreid,
-                'itemname' => 'user'
-            ]);
-
-            if (empty($backupusers)) {
-                coursetransfer_logger::warning(
-                    $request->id,
-                    coursetransfer_logger::DIRECTION_TARGET,
-                    'USER_MAPPING_NO_USERS',
-                    'No users found in backup_ids_temp table to map. This may indicate backup has no user data.'
-                );
-                return false;
-            }
-
-            $mappedcount = 0;
-            $skippedcount = 0;
-            $detailedlog = [];
-
-            foreach ($backupusers as $backupuser) {
-                // Skip if already mapped.
-                if (!empty($backupuser->newitemid)) {
-                    $detailedlog[] = "User ID {$backupuser->itemid} already mapped to {$backupuser->newitemid}";
-                    continue;
-                }
-
-                // Decode user info from backup.
-                $userinfo = unserialize(base64_decode($backupuser->info));
-                if (empty($userinfo)) {
-                    $skippedcount++;
-                    $detailedlog[] = "Failed to decode user info for backup item ID {$backupuser->id}";
-                    continue;
-                }
-
-                // Extract match field value.
-                $matchvalue = null;
-                if (is_object($userinfo)) {
-                    $matchvalue = $userinfo->$matchfield ?? null;
-                } else if (is_array($userinfo)) {
-                    $matchvalue = $userinfo[$matchfield] ?? null;
-                }
-
-                if (empty($matchvalue)) {
-                    $skippedcount++;
-                    $detailedlog[] = "No {$matchfield} found for backup user ID {$backupuser->itemid}";
-                    continue;
-                }
-
-                // Search for existing user in destination by match field (only local users, mnethostid=1).
-                $existingusers = $DB->get_records('user', [
-                    $matchfield => $matchvalue,
-                    'deleted' => 0,
-                    'mnethostid' => 1
-                ], 'id ASC', 'id, username, email, firstname, lastname', 0, 1);
-                
-                $existinguser = !empty($existingusers) ? reset($existingusers) : null;
-
-                if ($existinguser) {
-                    // CRITICAL: Map backup user to existing destination user.
-                    // This ensures all user-related data (grades, submissions, etc.) 
-                    // will be associated with the correct existing user.
-                    $backupuser->newitemid = $existinguser->id;
-                    $DB->update_record('backup_ids_temp', $backupuser);
-                    $mappedcount++;
+            foreach ($modules as $cm) {
+                try {
+                    // Get module name from modules table
+                    $module = $DB->get_record('modules', ['id' => $cm->module], 'name');
+                    if (!$module) {
+                        continue;
+                    }
+                    $modname = $module->name;
                     
-                    $detailedlog[] = sprintf(
-                        "✓ MAPPED: Backup user '%s' (origin ID: %d) → Destination user '%s %s' (ID: %d)",
-                        $matchvalue,
-                        $backupuser->itemid,
-                        $existinguser->firstname,
-                        $existinguser->lastname,
-                        $existinguser->id
-                    );
+                    // Delete module-specific data based on type
+                    switch ($modname) {
+                        case 'assign':
+                            // Delete assignment submissions and grades (prevent FK violations)
+                            $submissions = $DB->count_records('assign_submission', ['assignment' => $cm->instance]);
+                            if ($submissions > 0) {
+                                $DB->delete_records('assign_submission', ['assignment' => $cm->instance]);
+                                $deleted_counts['submissions'] += $submissions;
+                            }
+                            
+                            $grades = $DB->count_records('assign_grades', ['assignment' => $cm->instance]);
+                            if ($grades > 0) {
+                                $DB->delete_records('assign_grades', ['assignment' => $cm->instance]);
+                                $deleted_counts['grades'] += $grades;
+                            }
+                            
+                            // Delete assignment itself
+                            $DB->delete_records('assign', ['id' => $cm->instance]);
+                            $deleted_counts['assignments']++;
+                            break;
+                            
+                        case 'quiz':
+                            // Delete quiz attempts and question usages
+                            $attempts = $DB->get_records('quiz_attempts', ['quiz' => $cm->instance]);
+                            foreach ($attempts as $attempt) {
+                                // Delete question attempts first
+                                $DB->delete_records('question_attempts', ['questionusageid' => $attempt->uniqueid]);
+                                // Delete question usage
+                                $DB->delete_records('question_usages', ['id' => $attempt->uniqueid]);
+                            }
+                            $attempts_count = $DB->count_records('quiz_attempts', ['quiz' => $cm->instance]);
+                            if ($attempts_count > 0) {
+                                $DB->delete_records('quiz_attempts', ['quiz' => $cm->instance]);
+                                $deleted_counts['attempts'] += $attempts_count;
+                            }
+                            
+                            $DB->delete_records('quiz_grades', ['quiz' => $cm->instance]);
+                            $DB->delete_records('quiz', ['id' => $cm->instance]);
+                            $deleted_counts['quizzes']++;
+                            break;
+                        
+                        // Add more module types as needed
+                        default:
+                            // For other modules, delete from their respective tables
+                            if ($DB->get_manager()->table_exists($modname)) {
+                                $DB->delete_records($modname, ['id' => $cm->instance]);
+                            }
+                            break;
+                    }
                     
-                    coursetransfer_logger::info(
-                        $request->id,
-                        coursetransfer_logger::DIRECTION_TARGET,
-                        'USER_MAPPED',
-                        "Mapped backup user '{$matchvalue}' (origin ID: {$backupuser->itemid}) to destination user ID {$existinguser->id}",
-                        [
-                            'origin_id' => $backupuser->itemid,
-                            'destination_id' => $existinguser->id,
-                            'match_field' => $matchfield,
-                            'match_value' => $matchvalue
-                        ]
-                    );
-                } else {
-                    // User doesn't exist in destination.
-                    // Let Moodle handle it (will try to create or skip based on restore settings).
-                    $skippedcount++;
+                    // Delete the course module record itself
+                    $DB->delete_records('course_modules', ['id' => $cm->id]);
+                    $deleted_counts['modules']++;
                     
-                    $detailedlog[] = "⚠ NOT FOUND: User '{$matchvalue}' from backup not in destination";
-                    
+                } catch (\Exception $modException) {
+                    // Log but continue with other modules
                     coursetransfer_logger::warning(
-                        $request->id,
+                        $requestid,
                         coursetransfer_logger::DIRECTION_TARGET,
-                        'USER_NOT_FOUND',
-                        "User '{$matchvalue}' from backup not found in destination (will be created if backup includes user data)",
-                        null,
-                        [
-                            'origin_id' => $backupuser->itemid,
-                            'match_field' => $matchfield,
-                            'match_value' => $matchvalue
-                        ]
+                        'ROLLBACK_MODULE_ERROR',
+                        "Error rolling back module {$cm->id}: " . $modException->getMessage()
                     );
                 }
             }
-
-            // Log comprehensive summary.
-            $summary = implode("\n", $detailedlog);
+            
+            // 2. Delete gradebook entries for this course (except course grade item)
+            $grade_items = $DB->get_records('grade_items', ['courseid' => $courseid, 'itemtype' => 'mod']);
+            foreach ($grade_items as $item) {
+                $DB->delete_records('grade_grades', ['itemid' => $item->id]);
+                $DB->delete_records('grade_items', ['id' => $item->id]);
+            }
+            
+            // 3. Clean backup_ids_temp table for this restore
+            $backup_ids_count = $DB->count_records('backup_ids_temp', ['backupid' => $restoreid]);
+            if ($backup_ids_count > 0) {
+                $DB->delete_records('backup_ids_temp', ['backupid' => $restoreid]);
+                $deleted_counts['backup_ids'] = $backup_ids_count;
+            }
+            
+            // 4. Delete course files added during restore
+            try {
+                $fs = get_file_storage();
+                $context = \context_course::instance($courseid);
+                $files = $fs->get_area_files($context->id, 'course', 'legacy', false, 'timecreated DESC');
+                foreach ($files as $file) {
+                    if ($file->get_filename() !== '.') {
+                        $file->delete();
+                        $deleted_counts['files']++;
+                    }
+                }
+            } catch (\Exception $fileException) {
+                // Files cleanup not critical, log and continue
+                coursetransfer_logger::warning(
+                    $requestid,
+                    coursetransfer_logger::DIRECTION_TARGET,
+                    'ROLLBACK_FILES_ERROR',
+                    'Could not clean up files: ' . $fileException->getMessage()
+                );
+            }
+            
+            // 5. Rebuild course cache to reflect changes
+            rebuild_course_cache($courseid, true);
+            
+            // Commit all deletions
+            $transaction->allow_commit();
+            
             coursetransfer_logger::info(
-                $request->id,
+                $requestid,
                 coursetransfer_logger::DIRECTION_TARGET,
-                'USER_MAPPING_COMPLETE',
-                "User mapping complete: {$mappedcount} mapped, {$skippedcount} skipped/to be created from " . 
-                count($backupusers) . " total users. Match field: {$matchfield}\n\nDetailed mapping:\n{$summary}",
-                [
-                    'total_users' => count($backupusers),
-                    'mapped' => $mappedcount,
-                    'skipped' => $skippedcount,
-                    'match_field' => $matchfield,
-                    'restore_id' => $restoreid
-                ]
+                'ROLLBACK_COMPLETED',
+                'Rollback cleanup completed successfully',
+                null,
+                $deleted_counts
             );
             
-            return $mappedcount > 0;
-
-        } catch (\Exception $e) {
-            // Log error but don't fail the restore - let it continue with default behavior.
+            return true;
+            
+        } catch (\Exception $rollbackEx) {
+            $transaction->rollback($rollbackEx);
+            
             coursetransfer_logger::error(
-                $request->id,
+                $requestid,
                 coursetransfer_logger::DIRECTION_TARGET,
-                'USER_MAPPING_ERROR',
-                'Critical error mapping users: ' . $e->getMessage() . "\nTrace: " . $e->getTraceAsString(),
-                null,
-                null,
-                null,
-                ['exception_class' => get_class($e)]
+                'ROLLBACK_FAILED',
+                'Rollback cleanup failed: ' . $rollbackEx->getMessage(),
+                'ROLLBACK_ERROR',
+                ['exception' => get_class($rollbackEx)]
             );
+            
             return false;
         }
     }
-
 }

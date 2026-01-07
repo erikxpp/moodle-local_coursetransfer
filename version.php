@@ -33,8 +33,9 @@
  */
 defined('MOODLE_INTERNAL') || die();
 
-$plugin->version = 2024111805;
+
+$plugin->version = 2025010711;  // Fix course class namespace (factory\course not course\course)
 $plugin->requires = 2022112800;
 $plugin->component = 'local_coursetransfer';
-$plugin->release = '1.3.19';
+$plugin->release = '1.4.10';
 $plugin->maturity = MATURITY_STABLE;

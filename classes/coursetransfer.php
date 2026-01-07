@@ -526,7 +526,7 @@ class coursetransfer {
      * @throws moodle_exception
      */
     public static function remove_course(
-            stdClass $site, int $origincourseid, stdClass $user = null, int $nextruntime = null): array {
+            stdClass $site, int $origincourseid, ?stdClass $user = null, ?int $nextruntime = null): array {
 
         $errors = [];
 
@@ -580,7 +580,7 @@ class coursetransfer {
      * @throws moodle_exception
      */
     public static function remove_category(stdClass $site, int $origincatid,
-            stdClass $user = null, int $nextruntime = null): array {
+            ?stdClass $user = null, ?int $nextruntime = null): array {
 
         $errors = [];
 
@@ -673,6 +673,8 @@ class coursetransfer {
             $errors = [];
             $catcourserequests = [];
 
+            // Process each course - request backup from origin
+            // Origin will callback when backup is ready, then we download and restore
             foreach ($courses as $course) {
 
                 // 1. Configuration Course.
@@ -684,39 +686,13 @@ class coursetransfer {
                         false,
                         $configuration->nextruntime);
 
-                // 2. Check if course already exists in target category and reuse it, or create temporary course.
-                global $DB;
-                $existingcourse = $DB->get_record('course', [
-                        'shortname' => $course->shortname,
-                        'category' => $targetcategoryid
-                ]);
-                
-                if ($existingcourse) {
-                    // Reuse existing course in same category (from previous failed attempt or duplicate)
-                    $targetcourseid = $existingcourse->id;
-                } else {
-                    // Check if shortname exists globally in any other category
-                    $shortnameexists = $DB->record_exists('course', ['shortname' => $course->shortname]);
-                    
-                    if ($shortnameexists) {
-                        // Shortname exists in another category, create with temporary unique shortname
-                        // The restore process with overwrite_conf=true will update it to the correct one
-                        $tempshortname = 'TEMP_RESTORE_' . time() . '_' . uniqid();
-                        $targetcourseid = course::create(
-                                core_course_category::get($targetcategoryid),
-                                'Restaurando: ' . $course->fullname,
-                                $tempshortname);
-                    } else {
-                        // Shortname doesn't exist, create with the actual shortname to avoid "_1" suffix
-                        $targetcourseid = course::create(
-                                core_course_category::get($targetcategoryid),
-                                'Restaurando: ' . $course->fullname,
-                                $course->shortname);
-                    }
-                }
+                // 2. Create new course in this category.
+                $targetcourseid = course::create(
+                        core_course_category::get($targetcategoryid),
+                        $course->fullname, $course->shortname . '_' . uniqid());
                 $origincourseid = $course->id;
 
-                // 3. Request Restore Course.
+                // 3. Request Restore Course (this calls origin to start backup).
                 $courseres = self::restore_course_unity(
                         $user, $site, $targetcourseid, $origincourseid, $configurationcourse, [], $requestobject->id);
 
@@ -767,8 +743,8 @@ class coursetransfer {
      * @throws dml_exception
      * @throws moodle_exception
      */
-    protected static function restore_course_unity(stdClass $user, stdClass $site, int $targetcourseid, int $origincourseid,
-            configuration_course $configuration, array $sections = [], int $requestcatid = null): array {
+    public static function restore_course_unity(stdClass $user, stdClass $site, int $targetcourseid, int $origincourseid,
+            configuration_course $configuration, array $sections = [], ?int $requestcatid = null): array {
 
         $errors = [];
         // 1. Request DB.
@@ -843,7 +819,7 @@ class coursetransfer {
      * @param stdClass|null $user
      * @return core_course_category[]
      */
-    public static function get_subcategories(core_course_category $category, stdClass $user = null): array {
+    public static function get_subcategories(core_course_category $category, ?stdClass $user = null): array {
         $categories = [];
         self::get_childs($category, $categories, $user);
         return $categories;
@@ -856,7 +832,7 @@ class coursetransfer {
      * @param array $categories
      * @param stdClass|null $user
      */
-    public static function get_childs(core_course_category $category, array &$categories, stdClass $user = null) {
+    public static function get_childs(core_course_category $category, array &$categories, ?stdClass $user = null) {
         if ($category->get_children_count() > 0) {
             foreach ($category->get_children() as $child) {
                 if ($child->is_uservisible($user)) {
@@ -892,22 +868,42 @@ class coursetransfer {
         // 1. Create Role.
         $roleid = role::create_roles();
 
-        // 2. Add Permission.
+        // 2. Add Core Moodle Permissions for Course Transfer Operations
+        
+        // Category and Course Listing
         role::add_capability($roleid, 'moodle/category:viewcourselist');
         role::add_capability($roleid, 'moodle/course:view');
-        role::add_capability($roleid, 'moodle/course:create');
         role::add_capability($roleid, 'moodle/course:viewhiddencourses');
-        role::add_capability($roleid, 'moodle/backup:backuptargetimport');
+        role::add_capability($roleid, 'moodle/course:viewhiddenactivities');
+        role::add_capability($roleid, 'moodle/course:viewparticipants');
+        
+        // Course Management
+        role::add_capability($roleid, 'moodle/course:create');
+        role::add_capability($roleid, 'moodle/course:delete');
+        role::add_capability($roleid, 'moodle/course:update');
+        role::add_capability($roleid, 'moodle/course:changefullname');
+        role::add_capability($roleid, 'moodle/course:changeshortname');
+        role::add_capability($roleid, 'moodle/course:changeidnumber');
+        role::add_capability($roleid, 'moodle/course:changecategory');
+        role::add_capability($roleid, 'moodle/course:manageactivities');
+        
+        // Category Management
+        role::add_capability($roleid, 'moodle/category:manage');
+        role::add_capability($roleid, 'moodle/category:viewhiddencategories');
+        
+        // Backup Capabilities
         role::add_capability($roleid, 'moodle/backup:backupcourse');
         role::add_capability($roleid, 'moodle/backup:backupactivity');
         role::add_capability($roleid, 'moodle/backup:backupsection');
+        role::add_capability($roleid, 'moodle/backup:backuptargetimport');
         role::add_capability($roleid, 'moodle/backup:downloadfile');
         role::add_capability($roleid, 'moodle/backup:userinfo');
-        role::add_capability($roleid, 'moodle/backup:anonymise');
+        role::add_capability($roleid,'moodle/backup:anonymise');
         role::add_capability($roleid, 'moodle/backup:configure');
-        role::add_capability($roleid, 'webservice/rest:use');
-        role::add_capability($roleid, 'moodle/restore:restoreactivity');
+        
+        // Restore Capabilities
         role::add_capability($roleid, 'moodle/restore:restorecourse');
+        role::add_capability($roleid, 'moodle/restore:restoreactivity');
         role::add_capability($roleid, 'moodle/restore:restoresection');
         role::add_capability($roleid, 'moodle/restore:restoretargetimport');
         role::add_capability($roleid, 'moodle/restore:uploadfile');
@@ -915,11 +911,34 @@ class coursetransfer {
         role::add_capability($roleid, 'moodle/restore:userinfo');
         role::add_capability($roleid, 'moodle/restore:viewautomatedfilearea');
         role::add_capability($roleid, 'moodle/restore:createuser');
+        
+        // File and Content Access
+        role::add_capability($roleid, 'moodle/site:accessallgroups');
+        role::add_capability($roleid, 'moodle/site:viewfullnames');
+        
+        // Question Bank (needed for quiz backup/restore)
+        role::add_capability($roleid, 'moodle/question:viewall');
+        role::add_capability($roleid, 'moodle/question:viewmine');
+        role::add_capability($roleid, 'moodle/question:add');
+        role::add_capability($roleid, 'moodle/question:editall');
+        role::add_capability($roleid, 'moodle/question:editmine');
+        role::add_capability($roleid, 'moodle/question:moveall');
+        role::add_capability($roleid, 'moodle/question:movemine');
+        role::add_capability($roleid, 'moodle/question:usemine');
+        role::add_capability($roleid, 'moodle/question:useall');
+        
+        // System and Webservice
         role::add_capability($roleid, 'moodle/site:maintenanceaccess');
-        role::add_capability($roleid, 'moodle/course:delete');
-        role::add_capability($roleid, 'moodle/category:manage');
+        role::add_capability($roleid, 'webservice/rest:use');
+        
+        // Plugin-specific permissions
         role::add_capability($roleid, 'local/coursetransfer:origin_remove_course');
         role::add_capability($roleid, 'local/coursetransfer:origin_remove_category');
+        role::add_capability($roleid, 'local/coursetransfer:origin_restore_course_users');
+        role::add_capability($roleid, 'local/coursetransfer:target_restore_merge');
+        role::add_capability($roleid, 'local/coursetransfer:target_restore_content_remove');
+        role::add_capability($roleid, 'local/coursetransfer:target_restore_groups_remove');
+        role::add_capability($roleid, 'local/coursetransfer:target_restore_enrol_remove');
 
         // 3. Create User.
         $userid = user::create_user($roleid);
@@ -946,11 +965,10 @@ class coursetransfer {
      * @throws coding_exception
      */
     public static function has_course(stdClass $user): bool {
-        // Simplified for urgent migration: Only check if courses exist
-        // Skip permission checks since they're validated at webservice level
+        // Check if there are courses available (excluding site course)
+        // Uses get_courses() which validates permissions
         $cs = get_courses();
         
-        // Return true if there are any courses besides the site course (ID 1)
         foreach ($cs as $course) {
             if ((int)$course->id !== 1) {
                 return true;
@@ -972,13 +990,17 @@ class coursetransfer {
      */
     public static function get_courses_user(stdClass $user, int $page = 0, int $perpage = 0, string $search = ''): array {
         $courses = [];
+        
+        // Use get_courses() which validates moodle/backup:backupcourse capability
+        // The coursetransfer_ws role has this permission assigned during installation
         $cs = get_courses();
-        $item = null;
+        
         foreach ($cs as $course) {
             if (self::filter_course($course, $user, $search)) {
                 $courses[] = $course;
             }
         }
+        
         $total = count($courses);
         if ($perpage > 0) {
             $currentpage = max(0, $page);
@@ -1006,11 +1028,12 @@ class coursetransfer {
             $offset = $page * $perpage;
             $options = ['offset' => $offset, 'limit' => $perpage];
         }
+        
+        // Required capabilities - role local_coursetransfer_ws has these permissions
         $requiredcapabilities = ['moodle/backup:backupcourse'];
 
-        // Search the courses.
+        // Search the courses with capability check
         return core_course_category::search_courses($searchcriteria, $options, $requiredcapabilities);
-
 
     }
 
@@ -1243,7 +1266,15 @@ class coursetransfer {
         
         // Apply search filter if provided
         if (!empty($search)) {
-            if (strpos(strtolower($course->fullname), strtolower($search)) === false) {
+            $searchlower = strtolower($search);
+            
+            // Search in fullname, shortname, and idnumber for better results
+            $fullnamematch = strpos(strtolower($course->fullname), $searchlower) !== false;
+            $shortnamematch = strpos(strtolower($course->shortname), $searchlower) !== false;
+            $idnumbermatch = !empty($course->idnumber) && strpos(strtolower($course->idnumber), $searchlower) !== false;
+            
+            // Return true if ANY field matches
+            if (!$fullnamematch && !$shortnamematch && !$idnumbermatch) {
                 return false;
             }
         }

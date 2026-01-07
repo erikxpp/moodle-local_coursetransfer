@@ -224,7 +224,7 @@ class download_file_course_task extends \core\task\adhoc_task {
             // The notification will be sent AFTER successful restore in restore_course_task.php
             // This ensures the backup file is not deleted before restore completes.
             
-            coursetransfer_restore::create_task_restore_course($request, $file);
+            coursetransfer_restore::create_task_restore_course($request, $file, $fileurl);
             
         } catch (\Throwable $e) {
             // Catch ALL types of errors including Exception, Error, Fatal errors, etc.

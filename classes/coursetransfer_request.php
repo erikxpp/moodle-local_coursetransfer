@@ -437,6 +437,13 @@ class coursetransfer_request {
         $request = self::get($requestid);
         $status = self::STATUS_NOT_STARTED;
         $requests = json_decode($request->origin_category_requests);
+
+        // If there are no child course requests yet, do not mark as completed.
+        // Return the current request status (e.g., NOT_STARTED / IN_PROGRESS).
+        if (empty($requests) || !is_array($requests)) {
+            return (int)$request->status;
+        }
+
         $total = count($requests);
         $completedcount = 0;
         $haserrors = false;
@@ -528,5 +535,183 @@ class coursetransfer_request {
         $object->userid = $userid;
         $object->id = self::insert_or_update($object);
         return $object;
+    }
+
+    /**
+     * Enqueue courses for sequential restore processing.
+     *
+     * Instead of creating multiple adhoc tasks simultaneously, this method
+     * adds courses to a queue table and creates a single queue processor task.
+     *
+     * @param int $requestid Request ID
+     * @param array $courses Array of course objects with 'id' and 'fullname' properties
+     * @param int $priority Priority level (0 = normal, 1 = high)
+     * @return bool Success
+     */
+    public static function enqueue_courses_for_restore($requestid, $courses, $priority = 0) {
+        global $DB;
+
+        $now = time();
+        $count = 0;
+
+        foreach ($courses as $course) {
+            $queue_item = new \stdClass();
+            $queue_item->requestid = $requestid;
+            $queue_item->origin_course_id = $course->id;
+            $queue_item->origin_course_name = $course->fullname ?? 'Unknown';
+            $queue_item->priority = $priority;
+            $queue_item->status = 'pending';
+            $queue_item->attempts = 0;
+            $queue_item->max_attempts = 3;
+            $queue_item->processing_started = null;
+            $queue_item->processing_completed = null;
+            $queue_item->error_message = null;
+            $queue_item->timecreated = $now;
+            $queue_item->timemodified = $now;
+
+            $DB->insert_record('local_coursetransfer_queue', $queue_item);
+            $count++;
+        }
+
+        // Create ONE adhoc task to process the queue.
+        $task = new \local_coursetransfer\task\queue_processor_task();
+        $task->set_custom_data(['requestid' => $requestid]);
+        \core\task\manager::queue_adhoc_task($task);
+
+        coursetransfer_logger::info(
+            $requestid,
+            coursetransfer_logger::DIRECTION_TARGET,
+            'QUEUE_CREATED',
+            "Created restore queue with {$count} courses",
+            null,
+            ['course_count' => $count, 'priority' => $priority]
+        );
+
+        return true;
+    }
+
+    /**
+     * Get queue status for a request.
+     *
+     * @param int $requestid Request ID
+     * @return array Statistics about the queue
+     */
+    public static function get_queue_status($requestid) {
+        global $DB;
+
+        $sql = "SELECT status, COUNT(*) as count
+                FROM {local_coursetransfer_queue}
+                WHERE requestid = :requestid
+                GROUP BY status";
+
+        $records = $DB->get_records_sql($sql, ['requestid' => $requestid]);
+
+        $stats = [
+            'pending' => 0,
+            'processing' => 0,
+            'completed' => 0,
+            'failed' => 0,
+            'cancelled' => 0,
+            'total' => 0
+        ];
+
+        foreach ($records as $record) {
+            $stats[$record->status] = $record->count;
+            $stats['total'] += $record->count;
+        }
+
+        return $stats;
+    }
+
+    /**
+     * Pause queue processing for a request.
+     *
+     * @param int $requestid Request ID
+     * @return bool Success
+     */
+    public static function pause_queue($requestid) {
+        global $DB;
+
+        // Set all pending courses to a paused state (we'll use 'cancelled' for now).
+        // In a future enhancement, we could add a 'paused' status.
+        $DB->set_field_select(
+            'local_coursetransfer_queue',
+            'status',
+            'cancelled',
+            'requestid = :requestid AND status = :status',
+            ['requestid' => $requestid, 'status' => 'pending']
+        );
+
+        coursetransfer_logger::info(
+            $requestid,
+            coursetransfer_logger::DIRECTION_TARGET,
+            'QUEUE_PAUSED',
+            "Queue processing paused",
+            null,
+            ['requestid' => $requestid]
+        );
+
+        return true;
+    }
+
+    /**
+     * Cancel a specific course in the queue.
+     *
+     * @param int $queue_id Queue item ID
+     * @return bool Success
+     */
+    public static function cancel_queue_item($queue_id) {
+        global $DB;
+
+        $item = $DB->get_record('local_coursetransfer_queue', ['id' => $queue_id]);
+        if (!$item) {
+            return false;
+        }
+
+        if ($item->status === 'processing') {
+            // Cannot cancel a course that is currently processing.
+            return false;
+        }
+
+        $DB->set_field('local_coursetransfer_queue', 'status', 'cancelled', ['id' => $queue_id]);
+
+        coursetransfer_logger::info(
+            $item->requestid,
+            coursetransfer_logger::DIRECTION_TARGET,
+            'QUEUE_ITEM_CANCELLED',
+            "Queue item cancelled: course {$item->origin_course_id}",
+            null,
+            ['queue_id' => $queue_id]
+        );
+
+        return true;
+    }
+
+    /**
+     * Prioritize a specific course in the queue.
+     *
+     * @param int $queue_id Queue item ID
+     * @return bool Success
+     */
+    public static function prioritize_queue_item($queue_id) {
+        global $DB;
+
+        $item = $DB->get_record('local_coursetransfer_queue', ['id' => $queue_id]);
+        if (!$item || $item->status !== 'pending') {
+            return false;
+        }
+
+        $DB->set_field('local_coursetransfer_queue', 'priority', 1, ['id' => $queue_id]);
+
+        coursetransfer_logger::info(
+            $item->requestid,
+            coursetransfer_logger::DIRECTION_TARGET,
+            'QUEUE_ITEM_PRIORITIZED',
+            "Queue item prioritized: course {$item->origin_course_id}",
+            null,
+            ['queue_id' => $queue_id]
+        );
+
+        return true;
     }
 }
