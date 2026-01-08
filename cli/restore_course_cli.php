@@ -2145,9 +2145,14 @@ function notify_origin_cleanup($request) {
             $user = get_admin();
         }
         
+        // Get the backup URL from the request - this contains the origin request ID in the itemid
+        // URL format: .../local_coursetransfer/backup/{origin_request_id}/backup_{timestamp}_{origin_request_id}.mbz
+        $backup_url = isset($request->origin_backup_url) ? $request->origin_backup_url : '';
+        
         // Call the webservice to notify origin that restore completed
         // This triggers cleanup of the .mbz file in origin if auto_cleanup_origin_backup is enabled
-        $response = $api_request->target_backup_course_downloaded($request->id, $user);
+        // Pass the backup_url so origin can extract the correct itemid to delete
+        $response = $api_request->target_backup_course_downloaded($request->id, $user, $backup_url);
         
         if ($response->success) {
             $cleaned = isset($response->data->cleaned) ? $response->data->cleaned : false;
@@ -2163,7 +2168,8 @@ function notify_origin_cleanup($request) {
                 [
                     'origin_url' => $request->siteurl,
                     'backup_cleaned' => $cleaned,
-                    'request_id' => $request->id
+                    'request_id' => $request->id,
+                    'backup_url' => $backup_url
                 ]
             );
             

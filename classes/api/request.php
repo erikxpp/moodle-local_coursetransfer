@@ -254,12 +254,14 @@ class request {
      *
      * @param int $requestid
      * @param stdClass|null $user
+     * @param string $backup_url Optional backup URL to help origin identify the correct file
      * @return response
      * @throws dml_exception
      */
-    public function target_backup_course_downloaded(int $requestid, stdClass $user = null): response {
+    public function target_backup_course_downloaded(int $requestid, stdClass $user = null, string $backup_url = ''): response {
         $params = $this->get_request_params($user);
         $params['requestid'] = $requestid;
+        $params['backup_url'] = $backup_url;
         return $this->req('local_coursetransfer_target_backup_downloaded', $params);
     }
 

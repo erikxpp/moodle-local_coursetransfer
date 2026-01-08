@@ -194,6 +194,7 @@ class target_course_callback_external extends external_api {
                 'field' => new external_value(PARAM_TEXT, 'Field'),
                 'value' => new external_value(PARAM_TEXT, 'Value'),
                 'requestid' => new external_value(PARAM_INT, 'Request ID'),
+                'backup_url' => new external_value(PARAM_RAW, 'Backup URL to extract origin request ID', VALUE_DEFAULT, ''),
             ]
         );
     }
@@ -209,19 +210,21 @@ class target_course_callback_external extends external_api {
      * @throws invalid_parameter_exception
      * @throws moodle_exception
      */
-    public static function target_backup_downloaded(string $field, string $value, int $requestid): array {
+    public static function target_backup_downloaded(string $field, string $value, int $requestid, string $backup_url = ''): array {
 
         $params = self::validate_parameters(
             self::target_backup_downloaded_parameters(), [
                 'field' => $field,
                 'value' => $value,
                 'requestid' => $requestid,
+                'backup_url' => $backup_url,
             ]
         );
 
         $field = $params['field'];
         $value = $params['value'];
         $requestid = $params['requestid'];
+        $backup_url = $params['backup_url'];
 
         $errors = [];
         $data = new stdClass();
@@ -238,13 +241,26 @@ class target_course_callback_external extends external_api {
                         $fs = get_file_storage();
                         $context = \context_course::instance($request->origin_course_id);
                         
+                        // Extract the ORIGIN request ID from the backup URL
+                        // URL format: .../local_coursetransfer/backup/{itemid}/backup_{timestamp}_{originrequestid}.mbz
+                        // The itemid in the URL IS the origin request ID, which we need to delete the correct file
+                        $origin_request_id = $requestid; // Default to requestid for backward compatibility
+                        
+                        if (!empty($backup_url)) {
+                            // Try to extract itemid from URL path: /backup/{itemid}/
+                            if (preg_match('#/backup/(\d+)/#', $backup_url, $matches)) {
+                                $origin_request_id = (int)$matches[1];
+                                mtrace("Extracted origin request ID {$origin_request_id} from backup URL");
+                            }
+                        }
+                        
                         // Delete the backup file from local_coursetransfer filearea
-                        // Use pattern to find file: backup_{timestamp}_{requestid}.mbz
+                        // Use the origin_request_id as itemid (NOT the target's requestid)
                         $files = $fs->get_area_files(
                             $context->id,
                             'local_coursetransfer',
                             'backup',
-                            $requestid,
+                            $origin_request_id,
                             'timemodified DESC',
                             false // Don't include directories
                         );
@@ -256,15 +272,15 @@ class target_course_callback_external extends external_api {
                         foreach ($files as $file) {
                             $filename = $file->get_filename();
                             $filesize = $file->get_filesize();
-                            // Match pattern: backup_{timestamp}_{requestid}.mbz
-                            if (preg_match('/^backup_\d+_' . $requestid . '\.mbz$/', $filename)) {
+                            // Match pattern: backup_{timestamp}_{origin_request_id}.mbz
+                            if (preg_match('/^backup_\d+_' . $origin_request_id . '\.mbz$/', $filename)) {
                                 $filefound = true;
                                 $deletedfilename = $filename;
                                 $deletedfilesize = $filesize;
                                 
                                 $file->delete();
                                 $data->cleaned = true;
-                                mtrace("Cleaned origin backup file '{$filename}' for request {$requestid}");
+                                mtrace("Cleaned origin backup file '{$filename}' for origin request {$origin_request_id} (target request {$requestid})");
                                 
                                 break; // Only delete the first matching file
                             }
@@ -273,7 +289,7 @@ class target_course_callback_external extends external_api {
                         // Always log what happened (file deleted or not found)
                         if ($filefound) {
                             \local_coursetransfer\coursetransfer_logger::info(
-                                $requestid,
+                                $origin_request_id,
                                 \local_coursetransfer\coursetransfer_logger::DIRECTION_ORIGIN,
                                 'ORIGIN_BACKUP_DELETED',
                                 'Origin backup file deleted after successful restore on target',
@@ -281,20 +297,23 @@ class target_course_callback_external extends external_api {
                                     'filename' => $deletedfilename,
                                     'file_size' => $deletedfilesize,
                                     'file_size_mb' => round($deletedfilesize / 1048576, 2),
-                                    'request_id' => $requestid
+                                    'origin_request_id' => $origin_request_id,
+                                    'target_request_id' => $requestid
                                 ]
                             );
                         } else {
                             \local_coursetransfer\coursetransfer_logger::warning(
-                                $requestid,
+                                $origin_request_id,
                                 \local_coursetransfer\coursetransfer_logger::DIRECTION_ORIGIN,
                                 'ORIGIN_BACKUP_NOT_FOUND',
                                 'Origin backup file not found when trying to delete (may have been already cleaned)',
                                 null,
                                 [
-                                    'request_id' => $requestid,
+                                    'origin_request_id' => $origin_request_id,
+                                    'target_request_id' => $requestid,
                                     'context_id' => $context->id,
-                                    'total_files_in_area' => count($files)
+                                    'total_files_in_area' => count($files),
+                                    'backup_url' => $backup_url
                                 ]
                             );
                         }

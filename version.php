@@ -34,8 +34,8 @@
 defined('MOODLE_INTERNAL') || die();
 
 
-$plugin->version = 2025010718;  // Fix course names to match origin (remove "copia X" suffix)
+$plugin->version = 2025010719;  // Fix backup cleanup to use origin request ID from URL
 $plugin->requires = 2022112800;
 $plugin->component = 'local_coursetransfer';
-$plugin->release = '1.4.17';
+$plugin->release = '1.4.18';
 $plugin->maturity = MATURITY_STABLE;
