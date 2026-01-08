@@ -76,7 +76,8 @@ class target_course_callback_external extends external_api {
                 'requestid' => new external_value(PARAM_INT, 'Request ID'),
                 'backupsize' => new external_value(PARAM_INT, 'Backup Size (Bytes)'),
                 'fileurl' => new external_value(PARAM_RAW, 'File URL'),
-                'origin_request_id' => new external_value(PARAM_INT, 'Origin Request ID for backup cleanup', VALUE_DEFAULT, 0),
+                // NOTE: origin_request_id removed for Moodle 4.1 compatibility
+                // It will be extracted from fileurl instead (backup_{timestamp}_{origin_request_id}.mbz)
             ]
         );
     }
@@ -89,14 +90,13 @@ class target_course_callback_external extends external_api {
      * @param int $requestid
      * @param int $backupsize
      * @param string $fileurl
-     * @param int $origin_request_id Origin request ID for backup cleanup
      *
      * @return array
      * @throws invalid_parameter_exception
      * @throws moodle_exception
      */
     public static function target_backup_course_completed(string $field, string $value, int $requestid,
-                                                           int $backupsize, string $fileurl, int $origin_request_id = 0): array {
+                                                           int $backupsize, string $fileurl): array {
 
         $params = self::validate_parameters(
             self::target_backup_course_completed_parameters(), [
@@ -105,7 +105,6 @@ class target_course_callback_external extends external_api {
                 'requestid' => $requestid,
                 'backupsize' => $backupsize,
                 'fileurl' => $fileurl,
-                'origin_request_id' => $origin_request_id,
             ]
         );
 
@@ -114,7 +113,13 @@ class target_course_callback_external extends external_api {
         $requestid = $params['requestid'];
         $backupsize = $params['backupsize'];
         $fileurl = $params['fileurl'];
-        $origin_request_id = $params['origin_request_id'];
+        
+        // Extract origin_request_id from fileurl for Moodle 4.1/4.5 compatibility
+        // URL format: .../backup/{origin_request_id}/backup_{timestamp}_{origin_request_id}.mbz
+        $origin_request_id = 0;
+        if (preg_match('/\/backup\/(\d+)\/backup_\d+_\d+\.mbz/', $fileurl, $matches)) {
+            $origin_request_id = (int)$matches[1];
+        }
 
         $errors = [];
         $data = new stdClass();
@@ -203,7 +208,8 @@ class target_course_callback_external extends external_api {
                 'field' => new external_value(PARAM_TEXT, 'Field'),
                 'value' => new external_value(PARAM_TEXT, 'Value'),
                 'requestid' => new external_value(PARAM_INT, 'Request ID'),
-                'origin_request_id' => new external_value(PARAM_INT, 'Origin Request ID for backup cleanup', VALUE_DEFAULT, 0),
+                // NOTE: origin_request_id removed for Moodle 4.1 compatibility
+                // It will be retrieved from the stored request.origin_request_id or extracted from origin_backup_url
             ]
         );
     }
@@ -214,27 +220,24 @@ class target_course_callback_external extends external_api {
      * @param string $field
      * @param string $value
      * @param int $requestid
-     * @param int $origin_request_id Origin request ID (if known)
      *
      * @return array
      * @throws invalid_parameter_exception
      * @throws moodle_exception
      */
-    public static function target_backup_downloaded(string $field, string $value, int $requestid, int $origin_request_id = 0): array {
+    public static function target_backup_downloaded(string $field, string $value, int $requestid): array {
 
         $params = self::validate_parameters(
             self::target_backup_downloaded_parameters(), [
                 'field' => $field,
                 'value' => $value,
                 'requestid' => $requestid,
-                'origin_request_id' => $origin_request_id,
             ]
         );
 
         $field = $params['field'];
         $value = $params['value'];
         $requestid = $params['requestid'];
-        $origin_request_id = $params['origin_request_id'];
 
         $errors = [];
         $data = new stdClass();
@@ -252,13 +255,24 @@ class target_course_callback_external extends external_api {
                         $context = \context_course::instance($request->origin_course_id);
                         
                         // Determine the origin request ID to use for file lookup
-                        // Priority: 1) Passed parameter, 2) Stored in request, 3) Same as requestid (legacy)
-                        $file_itemid = $origin_request_id;
-                        if ($file_itemid <= 0 && !empty($request->origin_request_id)) {
+                        // For Moodle 4.1/4.5 compatibility, extract from origin_backup_url
+                        // URL format: .../backup/{origin_request_id}/backup_{timestamp}_{origin_request_id}.mbz
+                        $file_itemid = 0;
+                        
+                        // First try: get from stored origin_request_id field
+                        if (!empty($request->origin_request_id)) {
                             $file_itemid = (int)$request->origin_request_id;
                         }
+                        
+                        // Second try: extract from origin_backup_url
+                        if ($file_itemid <= 0 && !empty($request->origin_backup_url)) {
+                            if (preg_match('/\\/backup\\/(\\d+)\\/backup_\\d+_\\d+\\.mbz/', $request->origin_backup_url, $matches)) {
+                                $file_itemid = (int)$matches[1];
+                            }
+                        }
+                        
+                        // Fallback: use requestid (legacy behavior)
                         if ($file_itemid <= 0) {
-                            // Fallback for backward compatibility
                             $file_itemid = $requestid;
                         }
                         

@@ -34,8 +34,8 @@
 defined('MOODLE_INTERNAL') || die();
 
 
-$plugin->version = 2025010721;  // v1.4.20 - Fix origin using origin_request_id parameter for cleanup
+$plugin->version = 2025010722;  // v1.4.21 - Moodle 4.1/4.5 compatibility - extract origin_request_id from URL
 $plugin->requires = 2022112800;
 $plugin->component = 'local_coursetransfer';
-$plugin->release = '1.4.20';
+$plugin->release = '1.4.21';
 $plugin->maturity = MATURITY_STABLE;
