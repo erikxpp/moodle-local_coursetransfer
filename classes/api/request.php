@@ -257,15 +257,13 @@ class request {
      *
      * @param int $requestid Target request ID
      * @param stdClass|null $user
-     * @param int $origin_request_id Origin request ID (not sent to webservice for Moodle 4.1 compatibility)
      * @return response
      * @throws dml_exception
      */
-    public function target_backup_course_downloaded(int $requestid, stdClass $user = null, int $origin_request_id = 0): response {
+    public function target_backup_course_downloaded(int $requestid, stdClass $user = null): response {
         $params = $this->get_request_params($user);
         $params['requestid'] = $requestid;
-        // NOTE: origin_request_id is NOT sent as parameter for Moodle 4.1 compatibility
-        // The origin will extract it from the stored origin_backup_url instead
+        // Origin extracts origin_request_id from stored origin_backup_url for correct file identification
         return $this->req('local_coursetransfer_target_backup_downloaded', $params);
     }
 

@@ -2145,13 +2145,10 @@ function notify_origin_cleanup($request) {
             $user = get_admin();
         }
         
-        // Get the origin_request_id from the request - this was stored when backup completed
-        // and allows the origin to identify exactly which backup file to delete
-        $origin_request_id = isset($request->origin_request_id) ? (int)$request->origin_request_id : 0;
-        
         // Call the webservice to notify origin that restore completed
         // This triggers cleanup of the .mbz file in origin if auto_cleanup_origin_backup is enabled
-        $response = $api_request->target_backup_course_downloaded($request->id, $user, $origin_request_id);
+        // Note: origin_request_id is stored in the request record and origin extracts it from origin_backup_url
+        $response = $api_request->target_backup_course_downloaded($request->id, $user);
         
         if ($response->success) {
             $cleaned = isset($response->data->cleaned) ? $response->data->cleaned : false;
@@ -2167,8 +2164,7 @@ function notify_origin_cleanup($request) {
                 [
                     'origin_url' => $request->siteurl,
                     'backup_cleaned' => $cleaned,
-                    'request_id' => $request->id,
-                    'origin_request_id' => $origin_request_id
+                    'request_id' => $request->id
                 ]
             );
             

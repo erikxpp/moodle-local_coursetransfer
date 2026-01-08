@@ -271,12 +271,33 @@ class target_course_callback_external extends external_api {
                             }
                         }
                         
-                        // Fallback: use requestid (legacy behavior)
+                        // SAFETY: If no valid origin_request_id found, skip cleanup to avoid deleting wrong file
+                        // Do NOT use requestid as fallback - it's the TARGET request ID, not origin's
                         if ($file_itemid <= 0) {
-                            $file_itemid = $requestid;
+                            mtrace("WARNING: No valid origin_request_id found for target request {$requestid}, skipping backup cleanup");
+                            
+                            \local_coursetransfer\coursetransfer_logger::warning(
+                                $requestid,
+                                \local_coursetransfer\coursetransfer_logger::DIRECTION_ORIGIN,
+                                'ORIGIN_BACKUP_CLEANUP_SKIPPED',
+                                'No valid origin_request_id found, skipping cleanup to avoid deleting wrong file',
+                                null,
+                                [
+                                    'target_request_id' => $requestid,
+                                    'origin_backup_url' => $request->origin_backup_url ?? 'empty'
+                                ]
+                            );
+                            
+                            // Return success but with cleaned=false
+                            $data->id = $request->id;
+                            return [
+                                'success' => true,
+                                'data' => $data,
+                                'errors' => [],
+                            ];
                         }
                         
-                        mtrace("Using origin_request_id {$file_itemid} to cleanup backup file (target request: {$requestid})");
+                        mtrace("Using origin_request_id {$file_itemid} to cleanup backup file (target request: {$requestid});");
                         
                         // Delete the backup file from local_coursetransfer filearea
                         $files = $fs->get_area_files(
