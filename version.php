@@ -34,8 +34,8 @@
 defined('MOODLE_INTERNAL') || die();
 
 
-$plugin->version = 2025010717;  // Fix false CLI failure when restore succeeds but cleanup fails
+$plugin->version = 2025010718;  // Fix course names to match origin (remove "copia X" suffix)
 $plugin->requires = 2022112800;
 $plugin->component = 'local_coursetransfer';
-$plugin->release = '1.4.16';
+$plugin->release = '1.4.17';
 $plugin->maturity = MATURITY_STABLE;

@@ -297,6 +297,25 @@ try {
         }
     }
 
+    // POST-RESTORE: Fix course names - remove "copia X" suffix and "_X" from shortname
+    // Moodle adds these suffixes when restoring to existing course slots
+    cli_writeln("[RESTORE CLI] ========================================");
+    cli_writeln("[RESTORE CLI] FIXING COURSE NAMES FROM ORIGIN");
+    cli_writeln("[RESTORE CLI] ========================================");
+    
+    $names_fixed = fix_course_names_from_origin($origin_data, $request->target_course_id, $DB);
+    if ($names_fixed['changed']) {
+        cli_writeln("[RESTORE CLI] ✓ Course names corrected to match origin");
+        if (!empty($names_fixed['fullname'])) {
+            cli_writeln("[RESTORE CLI]   Fullname: " . $names_fixed['fullname']);
+        }
+        if (!empty($names_fixed['shortname'])) {
+            cli_writeln("[RESTORE CLI]   Shortname: " . $names_fixed['shortname']);
+        }
+    } else {
+        cli_writeln("[RESTORE CLI] ℹ Course names already match origin (no changes needed)");
+    }
+
     // POST-RESTORE: Validate and log availability restrictions
     cli_writeln("[RESTORE CLI] Validating availability restrictions...");
     $availability_issues = validate_availability_restrictions($request->target_course_id);
@@ -444,6 +463,112 @@ try {
     }
     
     exit(1);
+}
+
+/**
+ * Fix course names (fullname and shortname) to match origin.
+ * 
+ * Moodle's restore process adds suffixes like "copia 1", "copia 2", "_1", "_2" 
+ * when it detects name conflicts. This function corrects the names to exactly
+ * match the origin course.
+ *
+ * @param array $origin_data Data loaded from backup XML files
+ * @param int $courseid The target course ID
+ * @param moodle_database $DB Database connection
+ * @return array ['changed' => bool, 'fullname' => string|null, 'shortname' => string|null]
+ */
+function fix_course_names_from_origin($origin_data, $courseid, $DB) {
+    $result = [
+        'changed' => false,
+        'fullname' => null,
+        'shortname' => null,
+        'old_fullname' => null,
+        'old_shortname' => null
+    ];
+    
+    // Get current course data
+    $course = $DB->get_record('course', ['id' => $courseid], 'id, fullname, shortname');
+    if (!$course) {
+        cli_writeln("[RESTORE CLI] Warning: Could not find course {$courseid} to fix names");
+        return $result;
+    }
+    
+    $result['old_fullname'] = $course->fullname;
+    $result['old_shortname'] = $course->shortname;
+    
+    // Get origin names from backup data
+    $origin_fullname = null;
+    $origin_shortname = null;
+    
+    if (isset($origin_data['course']) && $origin_data['course']) {
+        $origin_fullname = (string)$origin_data['course']->fullname;
+        $origin_shortname = (string)$origin_data['course']->shortname;
+    }
+    
+    // If we couldn't get from origin_data, check if backup_info has it
+    if (empty($origin_fullname) && isset($origin_data['backup_info'])) {
+        $backup_info = $origin_data['backup_info'];
+        if (isset($backup_info->information->original_course_fullname)) {
+            $origin_fullname = (string)$backup_info->information->original_course_fullname;
+        }
+        if (isset($backup_info->information->original_course_shortname)) {
+            $origin_shortname = (string)$backup_info->information->original_course_shortname;
+        }
+    }
+    
+    cli_writeln("[RESTORE CLI] Current fullname: {$course->fullname}");
+    cli_writeln("[RESTORE CLI] Origin fullname: " . ($origin_fullname ?: 'not found'));
+    cli_writeln("[RESTORE CLI] Current shortname: {$course->shortname}");
+    cli_writeln("[RESTORE CLI] Origin shortname: " . ($origin_shortname ?: 'not found'));
+    
+    $updates = [];
+    
+    // Fix fullname if needed
+    if (!empty($origin_fullname) && $course->fullname !== $origin_fullname) {
+        // Check if current name has "copia X" suffix that needs to be removed
+        // Pattern matches: " copia 1", " copia 2", " copia 10", etc. (Spanish)
+        // Also matches: " copy 1", " copy 2", etc. (English)
+        $fullname_has_copy_suffix = preg_match('/\s+(copia|copy)\s+\d+$/i', $course->fullname);
+        
+        if ($fullname_has_copy_suffix || $course->fullname !== $origin_fullname) {
+            $updates['fullname'] = $origin_fullname;
+            $result['fullname'] = $origin_fullname;
+            cli_writeln("[RESTORE CLI]   → Will update fullname to: {$origin_fullname}");
+        }
+    }
+    
+    // Fix shortname if needed
+    if (!empty($origin_shortname) && $course->shortname !== $origin_shortname) {
+        // Check if current shortname has "_X" suffix that needs to be removed
+        // Pattern matches: "_1", "_2", "_10", etc.
+        $shortname_has_suffix = preg_match('/_\d+$/', $course->shortname);
+        
+        if ($shortname_has_suffix || $course->shortname !== $origin_shortname) {
+            // Before updating, check if the origin shortname would conflict with another course
+            $existing = $DB->get_record('course', ['shortname' => $origin_shortname], 'id');
+            if ($existing && $existing->id != $courseid) {
+                cli_writeln("[RESTORE CLI]   ⚠ Cannot use shortname '{$origin_shortname}' - already exists in course {$existing->id}");
+                // Keep the suffixed version to avoid conflict
+            } else {
+                $updates['shortname'] = $origin_shortname;
+                $result['shortname'] = $origin_shortname;
+                cli_writeln("[RESTORE CLI]   → Will update shortname to: {$origin_shortname}");
+            }
+        }
+    }
+    
+    // Apply updates
+    if (!empty($updates)) {
+        foreach ($updates as $field => $value) {
+            $DB->set_field('course', $field, $value, ['id' => $courseid]);
+        }
+        $result['changed'] = true;
+        
+        // Log the changes
+        cli_writeln("[RESTORE CLI]   ✓ Course names updated in database");
+    }
+    
+    return $result;
 }
 
 /**
