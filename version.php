@@ -34,8 +34,8 @@
 defined('MOODLE_INTERNAL') || die();
 
 
-$plugin->version = 2025010716;  // Respect auto_cleanup_target_backup setting + improved logging
+$plugin->version = 2025010717;  // Fix false CLI failure when restore succeeds but cleanup fails
 $plugin->requires = 2022112800;
 $plugin->component = 'local_coursetransfer';
-$plugin->release = '1.4.15';
+$plugin->release = '1.4.16';
 $plugin->maturity = MATURITY_STABLE;

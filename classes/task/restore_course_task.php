@@ -312,16 +312,47 @@ class restore_course_task extends \core\task\adhoc_task {
             $cli_result = $this->execute_restore_cli($requestid, $fileid);
             $success = $cli_result['success'];
             
+            // IMPORTANT: If CLI reports failure, double-check the request status in DB
+            // The CLI may have completed successfully but exited with error due to
+            // webservice issues during cleanup notification (e.g., origin server errors)
             if (!$success) {
-                $this->log('CLI restore failed: ' . ($cli_result['error'] ?? 'Unknown error'));
-                coursetransfer_logger::error(
-                    $requestid,
-                    coursetransfer_logger::DIRECTION_TARGET,
-                    'CLI_RESTORE_FAILED',
-                    'CLI restore process failed: ' . ($cli_result['error'] ?? 'Unknown'),
-                    null,
-                    ['exit_code' => $cli_result['exit_code'] ?? -1]
-                );
+                $this->log('CLI reported failure, checking actual request status in database...');
+                
+                // Refresh request from database to get actual status
+                $refreshed_request = coursetransfer_request::get($requestid);
+                
+                if ($refreshed_request && in_array($refreshed_request->status, [
+                    coursetransfer_request::STATUS_COMPLETED,
+                    coursetransfer_request::STATUS_COMPLETED_WITH_DIFFERENCES
+                ])) {
+                    // The restore actually succeeded! The CLI just had issues with post-restore operations
+                    $this->log('Request status is ' . $refreshed_request->status . ' - restore actually succeeded');
+                    $success = true;
+                    $request = $refreshed_request; // Use refreshed request
+                    
+                    coursetransfer_logger::info(
+                        $requestid,
+                        coursetransfer_logger::DIRECTION_TARGET,
+                        'CLI_EXIT_IGNORED',
+                        'CLI exited with error but restore completed successfully (status=' . $refreshed_request->status . ')',
+                        [
+                            'cli_exit_code' => $cli_result['exit_code'] ?? -1,
+                            'actual_status' => $refreshed_request->status,
+                            'note' => 'Post-restore operations may have had issues but course was restored'
+                        ]
+                    );
+                } else {
+                    // Restore really did fail
+                    $this->log('CLI restore failed: ' . ($cli_result['error'] ?? 'Unknown error'));
+                    coursetransfer_logger::error(
+                        $requestid,
+                        coursetransfer_logger::DIRECTION_TARGET,
+                        'CLI_RESTORE_FAILED',
+                        'CLI restore process failed: ' . ($cli_result['error'] ?? 'Unknown'),
+                        null,
+                        ['exit_code' => $cli_result['exit_code'] ?? -1]
+                    );
+                }
             }
             
             if ($success) {
