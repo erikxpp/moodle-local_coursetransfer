@@ -458,4 +458,6 @@ $string['target_logs'] = 'Logs del Destino';
 $string['back_to_logs'] = 'Volver a Logs';
 $string['requestnotfound'] = 'Solicitud no encontrada';
 
-
+// Queue system - Scheduled task for sequential restore
+$string['task_process_restore_queue'] = 'Course Transfer - Procesar Cola de Restauración';
+$string['task_process_restore_queue_desc'] = 'Procesa cursos de la cola de restauración uno a la vez. Se ejecuta cada minuto y toma el curso más antiguo en estado DESCARGADO.';

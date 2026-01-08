@@ -312,5 +312,22 @@ function xmldb_local_coursetransfer_upgrade($oldversion): bool {
         upgrade_plugin_savepoint(true, 2025010720, 'local', 'coursetransfer');
     }
 
+    // Add retry_count field for sequential restore queue processing.
+    // This tracks how many times a restore has been attempted before marking as failed.
+    if ($oldversion < 2025010823) {
+        
+        $table = new xmldb_table('local_coursetransfer_request');
+        $field = new xmldb_field('retry_count', XMLDB_TYPE_INTEGER, '2', null, null, null, '0', 'error_message');
+        
+        // Conditionally launch add field retry_count.
+        if (!$dbman->field_exists($table, $field)) {
+            $dbman->add_field($table, $field);
+            mtrace("Added retry_count field to local_coursetransfer_request table");
+        }
+        
+        // Coursetransfer savepoint reached.
+        upgrade_plugin_savepoint(true, 2025010823, 'local', 'coursetransfer');
+    }
+
     return true;
 }

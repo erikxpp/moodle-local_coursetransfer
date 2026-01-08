@@ -37,6 +37,7 @@
                 <FIELD NAME="target_target" SEQUENCE="false" TYPE="int" LENGTH="1" NOTNULL="false" DEFAULT="3" COMMENT="TARGET_NEW_COURSE = 2; TARGET_EXISTING_DELETING = 3; TARGET_EXISTING_ADDING = 4;"/>
                 <FIELD NAME="error_code" SEQUENCE="false" TYPE="int" LENGTH="10" NOTNULL="false" COMMENT="Code Error"/>
                 <FIELD NAME="error_message" SEQUENCE="false" TYPE="text" LENGTH="10" NOTNULL="false" COMMENT="Message Error"/>
+                <FIELD NAME="retry_count" SEQUENCE="false" TYPE="int" LENGTH="2" NOTNULL="false" DEFAULT="0" COMMENT="Number of restore retry attempts"/>
                 <FIELD NAME="fileurl" SEQUENCE="false" TYPE="text" LENGTH="250" NOTNULL="false" COMMENT="File URL backup"/>
                 <FIELD NAME="userid" SEQUENCE="false" TYPE="int" LENGTH="10" NOTNULL="true" COMMENT="Creator User ID"/>
                 <FIELD NAME="status" SEQUENCE="false" TYPE="int" LENGTH="10" NOTNULL="true" COMMENT="0 = error, 1 = not_started, 10 = in_progress, 30 = backup, 50 = download, 70 = downloaded, 80 = restore,  90 = incompleted for category, 100 = completed"/>

@@ -440,3 +440,5 @@ $string['retry'] = 'Retry';
 
 // Queue system
 $string['queue_processor_task'] = 'Course Transfer - Queue Processor';
+$string['task_process_restore_queue'] = 'Course Transfer - Process Restore Queue';
+$string['task_process_restore_queue_desc'] = 'Processes courses from the restore queue one at a time. Runs every minute and picks up the oldest course in DOWNLOADED status.';

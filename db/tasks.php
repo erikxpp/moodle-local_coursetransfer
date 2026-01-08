@@ -65,4 +65,14 @@ $tasks = [
                 'dayofweek' => '*',
                 'disabled' => 0,
         ],
+        [
+                'classname' => '\local_coursetransfer\task\process_restore_queue_task',
+                'blocking' => 0,
+                'minute' => '*',
+                'hour' => '*',
+                'day' => '*',
+                'month' => '*',
+                'dayofweek' => '*',
+                'disabled' => 0,
+        ],
 ];

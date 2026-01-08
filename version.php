@@ -34,8 +34,8 @@
 defined('MOODLE_INTERNAL') || die();
 
 
-$plugin->version = 2025010722;  // v1.4.21 - Moodle 4.1/4.5 compatibility - extract origin_request_id from URL
+$plugin->version = 2025010823;  // v1.5.0 - Sequential restore queue: scheduled task processes one course at a time
 $plugin->requires = 2022112800;
 $plugin->component = 'local_coursetransfer';
-$plugin->release = '1.4.21';
+$plugin->release = '1.5.0';
 $plugin->maturity = MATURITY_STABLE;

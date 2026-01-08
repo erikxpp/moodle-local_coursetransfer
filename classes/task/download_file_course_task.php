@@ -220,11 +220,27 @@ class download_file_course_task extends \core\task\adhoc_task {
                 throw $dbException; // Re-throw to be caught by outer catch
             }
             
-            // NOTE: We do NOT notify origin here anymore to avoid race condition.
-            // The notification will be sent AFTER successful restore in restore_course_task.php
-            // This ensures the backup file is not deleted before restore completes.
+            // NOTE: We do NOT create restore_course_task here anymore.
+            // The scheduled task process_restore_queue_task will pick up courses in
+            // STATUS_DOWNLOADED and process them ONE AT A TIME via CLI.
+            // This prevents multiple adhoc tasks from accumulating and blocking.
             
-            coursetransfer_restore::create_task_restore_course($request, $file, $fileurl);
+            // Log that course is queued for restore
+            coursetransfer_logger::info(
+                $requestid,
+                coursetransfer_logger::DIRECTION_TARGET,
+                'QUEUED_FOR_RESTORE',
+                'Course download complete. Queued for restore by scheduled task.',
+                [
+                    'target_course_id' => $request->target_course_id,
+                    'origin_course_id' => $request->origin_course_id,
+                    'file_id' => $file->get_id(),
+                    'file_size' => $file->get_filesize()
+                ]
+            );
+            
+            $this->log('Download complete. Course queued for restore (status=DOWNLOADED).');
+            $this->log('The scheduled task process_restore_queue_task will process it.');
             
         } catch (\Throwable $e) {
             // Catch ALL types of errors including Exception, Error, Fatal errors, etc.
