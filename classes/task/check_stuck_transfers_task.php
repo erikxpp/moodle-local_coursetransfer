@@ -90,12 +90,19 @@ class check_stuck_transfers_task extends scheduled_task {
         // 1. In progress (status between NOT_STARTED and COMPLETED, excluding ERROR)
         // 2. Haven't been modified in STUCK_TIMEOUT seconds
         // 3. Are individual courses OR categories
+        // 
+        // NOTE: We deliberately EXCLUDE STATUS_DOWNLOADED (70) and STATUS_RESTORE (80) because:
+        // - STATUS_DOWNLOADED: Courses are waiting in queue for process_restore_queue_task
+        // - STATUS_RESTORE: A restore is currently being processed
+        // These states are handled by the sequential restore queue and should not be marked as stuck.
         $sql = "SELECT r.*
                 FROM {local_coursetransfer_request} r
                 WHERE (r.type = :type_course OR r.type = :type_category)
                   AND r.status > :notstartedstatus
                   AND r.status != :errorstatus
                   AND r.status != :completedstatus
+                  AND r.status != :downloadedstatus
+                  AND r.status != :restorestatus
                   AND r.timemodified < :timeout";
 
         $params = [
@@ -104,6 +111,8 @@ class check_stuck_transfers_task extends scheduled_task {
             'notstartedstatus' => coursetransfer_request::STATUS_NOT_STARTED,
             'errorstatus' => coursetransfer_request::STATUS_ERROR,
             'completedstatus' => coursetransfer_request::STATUS_COMPLETED,
+            'downloadedstatus' => coursetransfer_request::STATUS_DOWNLOADED,
+            'restorestatus' => coursetransfer_request::STATUS_RESTORE,
             'timeout' => $timeoutthreshold,
         ];
 
