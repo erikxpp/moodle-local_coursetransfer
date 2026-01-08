@@ -34,8 +34,8 @@
 defined('MOODLE_INTERNAL') || die();
 
 
-$plugin->version = 2025010719;  // Fix backup cleanup to use origin request ID from URL
+$plugin->version = 2025010720;  // Add origin_request_id field for correct backup cleanup
 $plugin->requires = 2022112800;
 $plugin->component = 'local_coursetransfer';
-$plugin->release = '1.4.18';
+$plugin->release = '1.4.19';
 $plugin->maturity = MATURITY_STABLE;

@@ -295,5 +295,22 @@ function xmldb_local_coursetransfer_upgrade($oldversion): bool {
         upgrade_plugin_savepoint(true, 2025010707, 'local', 'coursetransfer');
     }
 
+    // Add origin_request_id field to track the request ID on the origin server.
+    // This is needed to correctly identify which backup file to delete when cleanup is triggered.
+    if ($oldversion < 2025010720) {
+        
+        $table = new xmldb_table('local_coursetransfer_request');
+        $field = new xmldb_field('origin_request_id', XMLDB_TYPE_INTEGER, '10', null, null, null, null, 'origin_backup_url');
+        
+        // Conditionally launch add field origin_request_id.
+        if (!$dbman->field_exists($table, $field)) {
+            $dbman->add_field($table, $field);
+            mtrace("Added origin_request_id field to local_coursetransfer_request table");
+        }
+        
+        // Coursetransfer savepoint reached.
+        upgrade_plugin_savepoint(true, 2025010720, 'local', 'coursetransfer');
+    }
+
     return true;
 }

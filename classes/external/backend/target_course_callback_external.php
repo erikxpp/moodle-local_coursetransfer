@@ -76,6 +76,7 @@ class target_course_callback_external extends external_api {
                 'requestid' => new external_value(PARAM_INT, 'Request ID'),
                 'backupsize' => new external_value(PARAM_INT, 'Backup Size (Bytes)'),
                 'fileurl' => new external_value(PARAM_RAW, 'File URL'),
+                'origin_request_id' => new external_value(PARAM_INT, 'Origin Request ID for backup cleanup', VALUE_DEFAULT, 0),
             ]
         );
     }
@@ -88,13 +89,14 @@ class target_course_callback_external extends external_api {
      * @param int $requestid
      * @param int $backupsize
      * @param string $fileurl
+     * @param int $origin_request_id Origin request ID for backup cleanup
      *
      * @return array
      * @throws invalid_parameter_exception
      * @throws moodle_exception
      */
     public static function target_backup_course_completed(string $field, string $value, int $requestid,
-                                                           int $backupsize, string $fileurl): array {
+                                                           int $backupsize, string $fileurl, int $origin_request_id = 0): array {
 
         $params = self::validate_parameters(
             self::target_backup_course_completed_parameters(), [
@@ -103,6 +105,7 @@ class target_course_callback_external extends external_api {
                 'requestid' => $requestid,
                 'backupsize' => $backupsize,
                 'fileurl' => $fileurl,
+                'origin_request_id' => $origin_request_id,
             ]
         );
 
@@ -111,6 +114,7 @@ class target_course_callback_external extends external_api {
         $requestid = $params['requestid'];
         $backupsize = $params['backupsize'];
         $fileurl = $params['fileurl'];
+        $origin_request_id = $params['origin_request_id'];
 
         $errors = [];
         $data = new stdClass();
@@ -127,6 +131,11 @@ class target_course_callback_external extends external_api {
                     $request->origin_backup_size = $backupsize;
                     $request->origin_backup_url = $fileurl;
                     $request->fileurl = $finalurl;
+                    // Store the origin request ID for cleanup - this is the key field
+                    // that allows correct identification of the backup file on origin
+                    if ($origin_request_id > 0) {
+                        $request->origin_request_id = $origin_request_id;
+                    }
                     coursetransfer_request::insert_or_update($request, $requestid);
                     coursetransfer_download::create_task_download_course($request, $finalurl);
                     $data->id = $request->id;
@@ -194,7 +203,7 @@ class target_course_callback_external extends external_api {
                 'field' => new external_value(PARAM_TEXT, 'Field'),
                 'value' => new external_value(PARAM_TEXT, 'Value'),
                 'requestid' => new external_value(PARAM_INT, 'Request ID'),
-                'backup_url' => new external_value(PARAM_RAW, 'Backup URL to extract origin request ID', VALUE_DEFAULT, ''),
+                'origin_request_id' => new external_value(PARAM_INT, 'Origin Request ID for backup cleanup', VALUE_DEFAULT, 0),
             ]
         );
     }
@@ -205,26 +214,27 @@ class target_course_callback_external extends external_api {
      * @param string $field
      * @param string $value
      * @param int $requestid
+     * @param int $origin_request_id Origin request ID (if known)
      *
      * @return array
      * @throws invalid_parameter_exception
      * @throws moodle_exception
      */
-    public static function target_backup_downloaded(string $field, string $value, int $requestid, string $backup_url = ''): array {
+    public static function target_backup_downloaded(string $field, string $value, int $requestid, int $origin_request_id = 0): array {
 
         $params = self::validate_parameters(
             self::target_backup_downloaded_parameters(), [
                 'field' => $field,
                 'value' => $value,
                 'requestid' => $requestid,
-                'backup_url' => $backup_url,
+                'origin_request_id' => $origin_request_id,
             ]
         );
 
         $field = $params['field'];
         $value = $params['value'];
         $requestid = $params['requestid'];
-        $backup_url = $params['backup_url'];
+        $origin_request_id = $params['origin_request_id'];
 
         $errors = [];
         $data = new stdClass();
@@ -241,26 +251,25 @@ class target_course_callback_external extends external_api {
                         $fs = get_file_storage();
                         $context = \context_course::instance($request->origin_course_id);
                         
-                        // Extract the ORIGIN request ID from the backup URL
-                        // URL format: .../local_coursetransfer/backup/{itemid}/backup_{timestamp}_{originrequestid}.mbz
-                        // The itemid in the URL IS the origin request ID, which we need to delete the correct file
-                        $origin_request_id = $requestid; // Default to requestid for backward compatibility
-                        
-                        if (!empty($backup_url)) {
-                            // Try to extract itemid from URL path: /backup/{itemid}/
-                            if (preg_match('#/backup/(\d+)/#', $backup_url, $matches)) {
-                                $origin_request_id = (int)$matches[1];
-                                mtrace("Extracted origin request ID {$origin_request_id} from backup URL");
-                            }
+                        // Determine the origin request ID to use for file lookup
+                        // Priority: 1) Passed parameter, 2) Stored in request, 3) Same as requestid (legacy)
+                        $file_itemid = $origin_request_id;
+                        if ($file_itemid <= 0 && !empty($request->origin_request_id)) {
+                            $file_itemid = (int)$request->origin_request_id;
+                        }
+                        if ($file_itemid <= 0) {
+                            // Fallback for backward compatibility
+                            $file_itemid = $requestid;
                         }
                         
+                        mtrace("Using origin_request_id {$file_itemid} to cleanup backup file (target request: {$requestid})");
+                        
                         // Delete the backup file from local_coursetransfer filearea
-                        // Use the origin_request_id as itemid (NOT the target's requestid)
                         $files = $fs->get_area_files(
                             $context->id,
                             'local_coursetransfer',
                             'backup',
-                            $origin_request_id,
+                            $file_itemid,
                             'timemodified DESC',
                             false // Don't include directories
                         );
@@ -273,14 +282,14 @@ class target_course_callback_external extends external_api {
                             $filename = $file->get_filename();
                             $filesize = $file->get_filesize();
                             // Match pattern: backup_{timestamp}_{origin_request_id}.mbz
-                            if (preg_match('/^backup_\d+_' . $origin_request_id . '\.mbz$/', $filename)) {
+                            if (preg_match('/^backup_\d+_' . $file_itemid . '\.mbz$/', $filename)) {
                                 $filefound = true;
                                 $deletedfilename = $filename;
                                 $deletedfilesize = $filesize;
                                 
                                 $file->delete();
                                 $data->cleaned = true;
-                                mtrace("Cleaned origin backup file '{$filename}' for origin request {$origin_request_id} (target request {$requestid})");
+                                mtrace("Cleaned origin backup file '{$filename}' for origin request {$file_itemid}");
                                 
                                 break; // Only delete the first matching file
                             }
@@ -289,7 +298,7 @@ class target_course_callback_external extends external_api {
                         // Always log what happened (file deleted or not found)
                         if ($filefound) {
                             \local_coursetransfer\coursetransfer_logger::info(
-                                $origin_request_id,
+                                $file_itemid,
                                 \local_coursetransfer\coursetransfer_logger::DIRECTION_ORIGIN,
                                 'ORIGIN_BACKUP_DELETED',
                                 'Origin backup file deleted after successful restore on target',
@@ -297,23 +306,22 @@ class target_course_callback_external extends external_api {
                                     'filename' => $deletedfilename,
                                     'file_size' => $deletedfilesize,
                                     'file_size_mb' => round($deletedfilesize / 1048576, 2),
-                                    'origin_request_id' => $origin_request_id,
+                                    'origin_request_id' => $file_itemid,
                                     'target_request_id' => $requestid
                                 ]
                             );
                         } else {
                             \local_coursetransfer\coursetransfer_logger::warning(
-                                $origin_request_id,
+                                $file_itemid,
                                 \local_coursetransfer\coursetransfer_logger::DIRECTION_ORIGIN,
                                 'ORIGIN_BACKUP_NOT_FOUND',
                                 'Origin backup file not found when trying to delete (may have been already cleaned)',
                                 null,
                                 [
-                                    'origin_request_id' => $origin_request_id,
+                                    'origin_request_id' => $file_itemid,
                                     'target_request_id' => $requestid,
                                     'context_id' => $context->id,
-                                    'total_files_in_area' => count($files),
-                                    'backup_url' => $backup_url
+                                    'total_files_in_area' => count($files)
                                 ]
                             );
                         }

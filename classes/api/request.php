@@ -234,34 +234,36 @@ class request {
      * Target Backup Course Completed.
      *
      * @param string $fileurl
-     * @param int $requestid
+     * @param int $requestid Target request ID
      * @param int $filesize
      * @param stdClass|null $user
+     * @param int $origin_request_id Origin request ID for backup cleanup
      * @return response
      * @throws dml_exception
      */
     public function target_backup_course_completed(
-            string $fileurl, int $requestid, int $filesize, stdClass $user = null): response {
+            string $fileurl, int $requestid, int $filesize, stdClass $user = null, int $origin_request_id = 0): response {
         $params = $this->get_request_params($user);
         $params['requestid'] = $requestid;
         $params['backupsize'] = $filesize;
         $params['fileurl'] = $fileurl;
+        $params['origin_request_id'] = $origin_request_id;
         return $this->req('local_coursetransfer_target_backup_course_completed', $params);
     }
 
     /**
      * Target Backup Downloaded - Notify origin to cleanup.
      *
-     * @param int $requestid
+     * @param int $requestid Target request ID
      * @param stdClass|null $user
-     * @param string $backup_url Optional backup URL to help origin identify the correct file
+     * @param int $origin_request_id Origin request ID for correct backup file identification
      * @return response
      * @throws dml_exception
      */
-    public function target_backup_course_downloaded(int $requestid, stdClass $user = null, string $backup_url = ''): response {
+    public function target_backup_course_downloaded(int $requestid, stdClass $user = null, int $origin_request_id = 0): response {
         $params = $this->get_request_params($user);
         $params['requestid'] = $requestid;
-        $params['backup_url'] = $backup_url;
+        $params['origin_request_id'] = $origin_request_id;
         return $this->req('local_coursetransfer_target_backup_downloaded', $params);
     }
 

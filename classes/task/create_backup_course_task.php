@@ -317,8 +317,9 @@ class create_backup_course_task extends \core\task\asynchronous_backup_task {
                         }
                     }
                     if (!$istest) {
+                        // Pass origin_request_id so target can store it for correct cleanup identification
                         $res = $request->target_backup_course_completed(
-                                $resfileurl->fileurl, $requestid, $resfileurl->filesize, $user);
+                                $resfileurl->fileurl, $requestid, $resfileurl->filesize, $user, $requestoriginid);
                     }
                     $requestorigin->status = coursetransfer_request::STATUS_COMPLETED;
                 } else {
