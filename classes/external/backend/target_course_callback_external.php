@@ -297,7 +297,7 @@ class target_course_callback_external extends external_api {
                             ];
                         }
                         
-                        mtrace("Using origin_request_id {$file_itemid} to cleanup backup file (target request: {$requestid});");
+                        // Note: No mtrace() here - webservice responses must be clean JSON
                         
                         // Delete the backup file from local_coursetransfer filearea
                         $files = $fs->get_area_files(
@@ -324,7 +324,7 @@ class target_course_callback_external extends external_api {
                                 
                                 $file->delete();
                                 $data->cleaned = true;
-                                mtrace("Cleaned origin backup file '{$filename}' for origin request {$file_itemid}");
+                                // Note: No mtrace() here - webservice responses must be clean JSON
                                 
                                 break; // Only delete the first matching file
                             }
