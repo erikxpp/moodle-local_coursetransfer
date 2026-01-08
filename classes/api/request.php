@@ -521,4 +521,30 @@ class request {
         }
         return $res;
     }
+
+    /**
+     * Get questionnaire survey data from origin.
+     *
+     * Retrieves complete survey data including questions, choices, and responses
+     * for migrating questionnaire dependencies.
+     *
+     * @param int $surveyid Survey ID to retrieve
+     * @param int $questionnaireid Questionnaire ID for responses (0 for survey only)
+     * @param bool $includeresponses Whether to include user responses
+     * @param stdClass|null $user User for authentication
+     * @return response
+     * @throws dml_exception
+     */
+    public function get_questionnaire_survey_data(
+        int $surveyid,
+        int $questionnaireid = 0,
+        bool $includeresponses = true,
+        stdClass $user = null
+    ): response {
+        $params = $this->get_request_params($user);
+        $params['surveyid'] = $surveyid;
+        $params['questionnaireid'] = $questionnaireid;
+        $params['includeresponses'] = $includeresponses ? 1 : 0;
+        return $this->req('local_coursetransfer_get_questionnaire_survey_data', $params);
+    }
 }

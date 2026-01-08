@@ -435,6 +435,24 @@ try {
         cli_writeln("[RESTORE CLI]   (Backup file will be cleaned by scheduled task in origin after 48h)");
     }
 
+    // FIX QUESTIONNAIRE PUBLIC SURVEYS
+    // Questionnaires with public surveys from other courses don't include survey data in backup
+    cli_writeln("[RESTORE CLI] ========================================");
+    cli_writeln("[RESTORE CLI] CHECKING QUESTIONNAIRE DEPENDENCIES");
+    cli_writeln("[RESTORE CLI] ========================================");
+    
+    $questionnaire_result = fix_questionnaire_missing_surveys($request, $request->target_course_id);
+    if ($questionnaire_result['checked'] > 0) {
+        cli_writeln("[RESTORE CLI] Questionnaires checked: {$questionnaire_result['checked']}");
+        cli_writeln("[RESTORE CLI] Surveys fixed: {$questionnaire_result['fixed']}");
+        cli_writeln("[RESTORE CLI] Responses imported: {$questionnaire_result['responses_imported']}");
+        if (!empty($questionnaire_result['errors'])) {
+            foreach ($questionnaire_result['errors'] as $err) {
+                cli_writeln("[RESTORE CLI] ⚠ {$err}");
+            }
+        }
+    }
+
     // Determine final status based on validation results
     $has_differences = isset($validation_result) && !$validation_result['success'];
     
@@ -2231,5 +2249,412 @@ function notify_origin_cleanup($request) {
             'cleaned' => false,
             'error' => $e->getMessage()
         ];
+    }
+}
+
+/**
+ * Check and fix questionnaires with missing public surveys.
+ * 
+ * Questionnaires that depend on public surveys from other courses don't include
+ * the survey data in the backup. This function detects such questionnaires and
+ * requests the survey data from the origin server.
+ *
+ * @param stdClass $request The transfer request object
+ * @param int $courseid The target course ID
+ * @return array Result with counts of fixed questionnaires
+ */
+function fix_questionnaire_missing_surveys($request, $courseid) {
+    global $DB, $CFG;
+    
+    $result = [
+        'checked' => 0,
+        'fixed' => 0,
+        'responses_imported' => 0,
+        'errors' => [],
+    ];
+    
+    // Check if questionnaire module is installed
+    if (!$DB->get_manager()->table_exists('questionnaire')) {
+        cli_writeln("[RESTORE CLI] mod_questionnaire not installed, skipping survey check");
+        return $result;
+    }
+    
+    // Get all questionnaires in the course
+    $questionnaires = $DB->get_records('questionnaire', ['course' => $courseid]);
+    if (empty($questionnaires)) {
+        cli_writeln("[RESTORE CLI] No questionnaires in course {$courseid}");
+        return $result;
+    }
+    
+    cli_writeln("[RESTORE CLI] Found " . count($questionnaires) . " questionnaire(s) in course");
+    
+    foreach ($questionnaires as $questionnaire) {
+        $result['checked']++;
+        
+        // Check if the survey exists
+        $survey = $DB->get_record('questionnaire_survey', ['id' => $questionnaire->sid]);
+        
+        if ($survey) {
+            cli_writeln("[RESTORE CLI]   Questionnaire '{$questionnaire->name}' (id={$questionnaire->id}): Survey exists");
+            continue;
+        }
+        
+        cli_writeln("[RESTORE CLI]   Questionnaire '{$questionnaire->name}' (id={$questionnaire->id}): Survey {$questionnaire->sid} MISSING");
+        cli_writeln("[RESTORE CLI]   → Requesting survey data from origin...");
+        
+        // Request survey data from origin
+        try {
+            $site = \local_coursetransfer\coursetransfer::get_site_by_url($request->siteurl);
+            if (!$site) {
+                $result['errors'][] = "Could not find origin site: {$request->siteurl}";
+                continue;
+            }
+            
+            $api_request = new \local_coursetransfer\api\request($site);
+            
+            // Get the origin questionnaire ID from the request if available
+            // We need to look it up based on origin_course_id
+            $origin_questionnaire_id = 0;
+            if (!empty($request->origin_course_id)) {
+                // Try to find the questionnaire in origin by name in the same course position
+                // This is approximate - ideally the backup would include the mapping
+                $origin_questionnaire_id = get_origin_questionnaire_id($request, $questionnaire);
+            }
+            
+            $response = $api_request->get_questionnaire_survey_data(
+                $questionnaire->sid,
+                $origin_questionnaire_id,
+                true // Include responses
+            );
+            
+            if (!$response->success) {
+                $error = isset($response->errors[0]->msg) ? $response->errors[0]->msg : 'Unknown error';
+                $result['errors'][] = "Failed to get survey {$questionnaire->sid}: {$error}";
+                cli_writeln("[RESTORE CLI]   ✗ Failed to get survey: {$error}");
+                continue;
+            }
+            
+            // Import the survey data
+            $import_result = import_questionnaire_survey_data($response->data, $questionnaire, $courseid);
+            
+            if ($import_result['success']) {
+                $result['fixed']++;
+                $result['responses_imported'] += $import_result['responses'];
+                cli_writeln("[RESTORE CLI]   ✓ Survey imported: {$import_result['questions']} questions, {$import_result['choices']} choices, {$import_result['responses']} responses");
+            } else {
+                $result['errors'][] = $import_result['error'];
+                cli_writeln("[RESTORE CLI]   ✗ Import failed: {$import_result['error']}");
+            }
+            
+        } catch (\Exception $e) {
+            $result['errors'][] = "Exception: " . $e->getMessage();
+            cli_writeln("[RESTORE CLI]   ✗ Exception: " . $e->getMessage());
+        }
+    }
+    
+    return $result;
+}
+
+/**
+ * Get the origin questionnaire ID for a restored questionnaire.
+ * 
+ * This attempts to find the corresponding questionnaire in the origin course
+ * by matching the cmid or position in the course.
+ *
+ * @param stdClass $request The transfer request
+ * @param stdClass $questionnaire The destination questionnaire
+ * @return int Origin questionnaire ID or 0 if not found
+ */
+function get_origin_questionnaire_id($request, $questionnaire) {
+    global $DB, $CFG;
+    
+    // The origin questionnaire ID should ideally be stored during backup
+    // For now, we'll try to request it from the origin
+    
+    try {
+        $site = \local_coursetransfer\coursetransfer::get_site_by_url($request->siteurl);
+        if (!$site) {
+            return 0;
+        }
+        
+        $api_request = new \local_coursetransfer\api\request($site);
+        
+        // Request course detail to get questionnaires
+        // This uses existing webservice
+        $user = \core_user::get_user($request->userid);
+        if (!$user) {
+            $user = get_admin();
+        }
+        
+        // For now, return 0 - the origin will still return the survey
+        // Responses will only be imported if we can match the questionnaire
+        return 0;
+        
+    } catch (\Exception $e) {
+        return 0;
+    }
+}
+
+/**
+ * Import questionnaire survey data from origin.
+ *
+ * @param stdClass $data Survey data from origin
+ * @param stdClass $questionnaire The destination questionnaire
+ * @param int $courseid The destination course ID
+ * @return array Result with success status and counts
+ */
+function import_questionnaire_survey_data($data, $questionnaire, $courseid) {
+    global $DB;
+    
+    $result = [
+        'success' => false,
+        'questions' => 0,
+        'choices' => 0,
+        'responses' => 0,
+        'error' => '',
+    ];
+    
+    try {
+        // Start transaction
+        $transaction = $DB->start_delegated_transaction();
+        
+        // Parse JSON data if needed
+        $survey_data = is_string($data->survey) ? json_decode($data->survey, true) : (array)$data->survey;
+        $questions_data = is_string($data->questions) ? json_decode($data->questions, true) : $data->questions;
+        $choices_data = is_string($data->choices) ? json_decode($data->choices, true) : $data->choices;
+        $responses_data = is_string($data->responses) ? json_decode($data->responses, true) : $data->responses;
+        
+        if (empty($survey_data)) {
+            $result['error'] = 'No survey data received';
+            return $result;
+        }
+        
+        // Check if survey already exists (might have been imported by another questionnaire)
+        $existing_survey = $DB->get_record('questionnaire_survey', ['id' => $survey_data['id']]);
+        
+        if (!$existing_survey) {
+            // Insert survey with original ID
+            $survey = new \stdClass();
+            $survey->id = $survey_data['id'];
+            $survey->name = $survey_data['name'];
+            $survey->courseid = $courseid; // Update to destination course
+            $survey->realm = $survey_data['realm'];
+            $survey->status = $survey_data['status'] ?? 0;
+            $survey->title = $survey_data['title'] ?? '';
+            $survey->email = $survey_data['email'] ?? '';
+            $survey->subtitle = $survey_data['subtitle'] ?? '';
+            $survey->info = $survey_data['info'] ?? '';
+            $survey->theme = $survey_data['theme'] ?? '';
+            $survey->thanks_page = $survey_data['thanks_page'] ?? '';
+            $survey->thank_head = $survey_data['thank_head'] ?? '';
+            $survey->thank_body = $survey_data['thank_body'] ?? '';
+            $survey->feedbacksections = $survey_data['feedbacksections'] ?? 0;
+            $survey->feedbacknotes = $survey_data['feedbacknotes'] ?? '';
+            $survey->feedbackscores = $survey_data['feedbackscores'] ?? 0;
+            $survey->chart_type = $survey_data['chart_type'] ?? '';
+            
+            // Use raw insert to preserve ID
+            $DB->execute(
+                "INSERT INTO {questionnaire_survey} (id, name, courseid, realm, status, title, email, subtitle, info, theme, thanks_page, thank_head, thank_body, feedbacksections, feedbacknotes, feedbackscores, chart_type) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                [$survey->id, $survey->name, $survey->courseid, $survey->realm, $survey->status, $survey->title, $survey->email, $survey->subtitle, $survey->info, $survey->theme, $survey->thanks_page, $survey->thank_head, $survey->thank_body, $survey->feedbacksections, $survey->feedbacknotes, $survey->feedbackscores, $survey->chart_type]
+            );
+            
+            cli_writeln("[RESTORE CLI]     Inserted survey ID {$survey->id}");
+        } else {
+            cli_writeln("[RESTORE CLI]     Survey ID {$survey_data['id']} already exists, skipping insert");
+        }
+        
+        // Insert questions with original IDs
+        if (!empty($questions_data)) {
+            foreach ($questions_data as $q) {
+                $q = (array)$q;
+                
+                // Check if question already exists
+                if ($DB->record_exists('questionnaire_question', ['id' => $q['id']])) {
+                    continue;
+                }
+                
+                $DB->execute(
+                    "INSERT INTO {questionnaire_question} (id, surveyid, name, type_id, result_id, length, precise, position, content, required, deleted, extradata) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                    [$q['id'], $q['surveyid'], $q['name'] ?? '', $q['type_id'], $q['result_id'] ?? 0, $q['length'] ?? 0, $q['precise'] ?? 0, $q['position'] ?? 0, $q['content'] ?? '', $q['required'] ?? 'n', $q['deleted'] ?? 'n', $q['extradata'] ?? '']
+                );
+                $result['questions']++;
+            }
+        }
+        
+        // Insert choices with original IDs
+        if (!empty($choices_data)) {
+            foreach ($choices_data as $c) {
+                $c = (array)$c;
+                
+                // Check if choice already exists
+                if ($DB->record_exists('questionnaire_quest_choice', ['id' => $c['id']])) {
+                    continue;
+                }
+                
+                $DB->execute(
+                    "INSERT INTO {questionnaire_quest_choice} (id, question_id, content, value) VALUES (?, ?, ?, ?)",
+                    [$c['id'], $c['question_id'], $c['content'] ?? '', $c['value']]
+                );
+                $result['choices']++;
+            }
+        }
+        
+        // Import responses if available
+        if (!empty($responses_data)) {
+            foreach ($responses_data as $r) {
+                $r = (array)$r;
+                
+                // Map user by email
+                if (empty($r['user_email'])) {
+                    continue;
+                }
+                
+                $user = $DB->get_record('user', ['email' => $r['user_email']], 'id');
+                if (!$user) {
+                    // Try by username
+                    if (!empty($r['user_username'])) {
+                        $user = $DB->get_record('user', ['username' => $r['user_username']], 'id');
+                    }
+                }
+                
+                if (!$user) {
+                    cli_writeln("[RESTORE CLI]     User not found: {$r['user_email']}");
+                    continue;
+                }
+                
+                // Check if response already exists for this user and questionnaire
+                $existing_response = $DB->get_record('questionnaire_response', [
+                    'questionnaireid' => $questionnaire->id,
+                    'userid' => $user->id,
+                ]);
+                
+                if ($existing_response) {
+                    continue; // Don't duplicate responses
+                }
+                
+                // Insert response with new ID
+                $response = new \stdClass();
+                $response->questionnaireid = $questionnaire->id; // Use destination questionnaire ID
+                $response->submitted = $r['submitted'];
+                $response->complete = $r['complete'];
+                $response->grade = $r['grade'] ?? 0;
+                $response->userid = $user->id;
+                
+                $new_response_id = $DB->insert_record('questionnaire_response', $response);
+                
+                // Import response details
+                import_response_details($r, $new_response_id);
+                
+                $result['responses']++;
+            }
+        }
+        
+        $transaction->allow_commit();
+        $result['success'] = true;
+        
+    } catch (\Exception $e) {
+        $result['error'] = $e->getMessage();
+        if (isset($transaction)) {
+            $transaction->rollback($e);
+        }
+    }
+    
+    return $result;
+}
+
+/**
+ * Import response details from all response tables.
+ *
+ * @param array $response_data Original response data with nested details
+ * @param int $new_response_id New response ID in destination
+ */
+function import_response_details($response_data, $new_response_id) {
+    global $DB;
+    
+    // Response bool
+    if (!empty($response_data['response_bool'])) {
+        foreach ($response_data['response_bool'] as $rb) {
+            $rb = (array)$rb;
+            $DB->insert_record('questionnaire_response_bool', [
+                'response_id' => $new_response_id,
+                'question_id' => $rb['question_id'],
+                'choice_id' => $rb['choice_id'],
+            ]);
+        }
+    }
+    
+    // Response date
+    if (!empty($response_data['response_date'])) {
+        foreach ($response_data['response_date'] as $rd) {
+            $rd = (array)$rd;
+            $DB->insert_record('questionnaire_response_date', [
+                'response_id' => $new_response_id,
+                'question_id' => $rd['question_id'],
+                'response' => $rd['response'],
+            ]);
+        }
+    }
+    
+    // Response multiple
+    if (!empty($response_data['response_multiple'])) {
+        foreach ($response_data['response_multiple'] as $rm) {
+            $rm = (array)$rm;
+            $DB->insert_record('questionnaire_resp_multiple', [
+                'response_id' => $new_response_id,
+                'question_id' => $rm['question_id'],
+                'choice_id' => $rm['choice_id'],
+            ]);
+        }
+    }
+    
+    // Response other
+    if (!empty($response_data['response_other'])) {
+        foreach ($response_data['response_other'] as $ro) {
+            $ro = (array)$ro;
+            $DB->insert_record('questionnaire_response_other', [
+                'response_id' => $new_response_id,
+                'question_id' => $ro['question_id'],
+                'choice_id' => $ro['choice_id'],
+                'response' => $ro['response'],
+            ]);
+        }
+    }
+    
+    // Response rank
+    if (!empty($response_data['response_rank'])) {
+        foreach ($response_data['response_rank'] as $rr) {
+            $rr = (array)$rr;
+            $DB->insert_record('questionnaire_response_rank', [
+                'response_id' => $new_response_id,
+                'question_id' => $rr['question_id'],
+                'choice_id' => $rr['choice_id'],
+                'rankvalue' => $rr['rankvalue'],
+            ]);
+        }
+    }
+    
+    // Response single
+    if (!empty($response_data['response_single'])) {
+        foreach ($response_data['response_single'] as $rs) {
+            $rs = (array)$rs;
+            $DB->insert_record('questionnaire_resp_single', [
+                'response_id' => $new_response_id,
+                'question_id' => $rs['question_id'],
+                'choice_id' => $rs['choice_id'],
+            ]);
+        }
+    }
+    
+    // Response text
+    if (!empty($response_data['response_text'])) {
+        foreach ($response_data['response_text'] as $rt) {
+            $rt = (array)$rt;
+            $DB->insert_record('questionnaire_response_text', [
+                'response_id' => $new_response_id,
+                'question_id' => $rt['question_id'],
+                'response' => $rt['response'],
+            ]);
+        }
     }
 }

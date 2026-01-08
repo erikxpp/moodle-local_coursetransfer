@@ -38,6 +38,7 @@ use local_coursetransfer\external\backend\origin_course_backup_external;
 use local_coursetransfer\external\backend\origin_course_external;
 use local_coursetransfer\external\backend\origin_user_external;
 use local_coursetransfer\external\backend\remove_external;
+use local_coursetransfer\external\backend\questionnaire_external;
 use local_coursetransfer\external\frontend\origin_remove_external;
 use local_coursetransfer\external\frontend\restore_category_external;
 use local_coursetransfer\external\frontend\restore_course_external;
@@ -338,6 +339,15 @@ $functions = [
             'loginrequired' => true,
     ],
 
+    'local_coursetransfer_get_questionnaire_survey_data' => [
+            'classname' => questionnaire_external::class,
+            'methodname' => 'get_questionnaire_survey_data',
+            'description' => 'Get questionnaire survey data including questions, choices, and responses for migration',
+            'type' => 'read',
+            'ajax' => true,
+            'loginrequired' => true,
+    ],
+
 ];
 
 $services = [
@@ -374,6 +384,7 @@ $services = [
             'local_coursetransfer_site_target_test',
             'local_coursetransfer_dest_search_course_name',
             'local_coursetransfer_retry_failed_request',
+            'local_coursetransfer_get_questionnaire_survey_data',
         ],
         'downloadfiles' => 1,
         'restrictedusers' => 1,
