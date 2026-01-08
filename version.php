@@ -34,8 +34,8 @@
 defined('MOODLE_INTERNAL') || die();
 
 
-$plugin->version = 2025010711;  // Fix course class namespace (factory\course not course\course)
+$plugin->version = 2025010716;  // Respect auto_cleanup_target_backup setting + improved logging
 $plugin->requires = 2022112800;
 $plugin->component = 'local_coursetransfer';
-$plugin->release = '1.4.10';
+$plugin->release = '1.4.15';
 $plugin->maturity = MATURITY_STABLE;

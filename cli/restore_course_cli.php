@@ -209,6 +209,48 @@ try {
         $target_mode
     );
 
+    // CRITICAL: Configure restore plan settings to copy ALL course configuration from origin
+    // Without overwrite_conf=true, Moodle keeps the destination course settings instead of origin's
+    $plan = $rc->get_plan();
+    if ($plan) {
+        cli_writeln("[RESTORE CLI] Configuring restore plan settings...");
+        
+        // Get configuration from request
+        $config = !empty($request->configuration) ? json_decode($request->configuration, true) : [];
+        $removeenrols = isset($config['targetremoveenrols']) ? (int)$config['targetremoveenrols'] : 0;
+        $removegroups = isset($config['targetremovegroups']) ? (int)$config['targetremovegroups'] : 0;
+        
+        // Determine keep settings based on target mode
+        if ($target_mode !== \backup::TARGET_CURRENT_DELETING && $target_mode !== \backup::TARGET_EXISTING_DELETING) {
+            $keeprolesenrolments = true;
+            $keepgroupsgroupings = true;
+        } else {
+            $keeprolesenrolments = $removeenrols === 1 ? false : true;
+            $keepgroupsgroupings = $removegroups === 1 ? false : true;
+        }
+        
+        // Define restore options - THIS IS CRITICAL for copying course configuration
+        $restoreoptions = [
+            'overwrite_conf' => true,  // CRITICAL: Overwrite course configuration with origin values
+            'keep_roles_and_enrolments' => $keeprolesenrolments,
+            'keep_groups_and_groupings' => $keepgroupsgroupings,
+        ];
+        
+        // Apply settings to the restore plan
+        foreach ($restoreoptions as $option => $value) {
+            try {
+                $setting = $plan->get_setting($option);
+                $setting->set_status(\base_setting::NOT_LOCKED);
+                $setting->set_value($value);
+                cli_writeln("[RESTORE CLI]   - {$option} = " . ($value ? 'true' : 'false'));
+            } catch (\Exception $e) {
+                cli_writeln("[RESTORE CLI]   - WARNING: Could not set {$option}: " . $e->getMessage());
+            }
+        }
+        
+        cli_writeln("[RESTORE CLI] Restore plan configured with overwrite_conf=true (will copy course settings from origin)");
+    }
+
     // Check if conversion needed
     if ($rc->get_status() == \backup::STATUS_REQUIRE_CONV) {
         cli_writeln("[RESTORE CLI] Converting backup format...");
@@ -229,7 +271,7 @@ try {
     }
 
     // Execute restore plan
-    cli_writeln("[RESTORE CLI] Executing restore plan...");
+    cli_writeln("[RESTORE CLI] Executing restore plan (with overwrite_conf=true)...");
     $rc->execute_plan();
     
     // Cleanup
@@ -290,13 +332,62 @@ try {
     // Note: Moodle already cleaned the temp directory during restore
     // fulldelete($backuppath); // Not needed - Moodle already did this
 
-    // Delete the backup file from moodledata (destination) to free space
-    cli_writeln("[RESTORE CLI] Cleaning up backup file (destination)...");
-    try {
-        $backupfile->delete();
-        cli_writeln("[RESTORE CLI] Backup file deleted successfully (destination)");
-    } catch (\Exception $deleteEx) {
-        cli_writeln("[RESTORE CLI] Warning: Could not delete backup file: " . $deleteEx->getMessage());
+    // Delete the backup file from moodledata (destination) if auto_cleanup is enabled
+    cli_writeln("[RESTORE CLI] ========================================");
+    cli_writeln("[RESTORE CLI] BACKUP CLEANUP (DESTINATION)");
+    cli_writeln("[RESTORE CLI] ========================================");
+    
+    $auto_cleanup_target = get_config('local_coursetransfer', 'auto_cleanup_target_backup');
+    cli_writeln("[RESTORE CLI] auto_cleanup_target_backup setting: " . ($auto_cleanup_target ? 'ENABLED' : 'DISABLED'));
+    
+    if ($auto_cleanup_target) {
+        cli_writeln("[RESTORE CLI] Attempting to delete backup file...");
+        cli_writeln("[RESTORE CLI]   File ID: " . $backupfile->get_id());
+        cli_writeln("[RESTORE CLI]   Filename: " . $backupfile->get_filename());
+        cli_writeln("[RESTORE CLI]   Size: " . round($backupfile->get_filesize() / 1024 / 1024, 2) . " MB");
+        cli_writeln("[RESTORE CLI]   Component: " . $backupfile->get_component());
+        cli_writeln("[RESTORE CLI]   Filearea: " . $backupfile->get_filearea());
+        cli_writeln("[RESTORE CLI]   Context ID: " . $backupfile->get_contextid());
+        
+        try {
+            $backupfile->delete();
+            cli_writeln("[RESTORE CLI] ✓ Backup file deleted successfully (destination)");
+            
+            // Log the deletion
+            \local_coursetransfer\coursetransfer_logger::info(
+                $request->id,
+                \local_coursetransfer\coursetransfer_logger::DIRECTION_TARGET,
+                'TARGET_BACKUP_DELETED',
+                'Target backup file (.mbz) deleted after successful restore',
+                [
+                    'filename' => $backupfile->get_filename(),
+                    'file_id' => $backupfile->get_id(),
+                    'request_id' => $request->id
+                ]
+            );
+        } catch (\Exception $deleteEx) {
+            cli_writeln("[RESTORE CLI] ⚠ Warning: Could not delete backup file: " . $deleteEx->getMessage());
+            cli_writeln("[RESTORE CLI]   Exception type: " . get_class($deleteEx));
+            
+            // Log the failure
+            \local_coursetransfer\coursetransfer_logger::warning(
+                $request->id,
+                \local_coursetransfer\coursetransfer_logger::DIRECTION_TARGET,
+                'TARGET_BACKUP_DELETE_FAILED',
+                'Failed to delete target backup file: ' . $deleteEx->getMessage(),
+                null,
+                [
+                    'filename' => $backupfile->get_filename(),
+                    'file_id' => $backupfile->get_id(),
+                    'exception' => get_class($deleteEx)
+                ]
+            );
+        }
+    } else {
+        cli_writeln("[RESTORE CLI] ℹ Backup file kept in destination (auto_cleanup_target_backup disabled)");
+        cli_writeln("[RESTORE CLI]   File: " . $backupfile->get_filename());
+        cli_writeln("[RESTORE CLI]   Size: " . round($backupfile->get_filesize() / 1024 / 1024, 2) . " MB");
+        cli_writeln("[RESTORE CLI]   To enable auto-cleanup, go to: Site Admin > Plugins > Local > Course Transfer > Settings");
     }
 
     // NOTIFY ORIGIN to cleanup the backup file there too (only the .mbz file, NOT the course)
@@ -623,6 +714,206 @@ function load_origin_data_from_backup($backuppath) {
         cli_writeln("[VALIDATION DEBUG] Sections found: {$section_count}");
     } else {
         cli_writeln("[VALIDATION DEBUG] Sections folder NOT FOUND");
+    }
+    
+    // Load users.xml - contains all users in the backup
+    $users_xml_path = $backuppath . '/users.xml';
+    cli_writeln("[VALIDATION DEBUG] Checking users.xml at: {$users_xml_path}");
+    if (file_exists($users_xml_path)) {
+        cli_writeln("[VALIDATION DEBUG] Found users.xml");
+        $data['users_xml'] = simplexml_load_file($users_xml_path);
+        
+        // Count total users from backup
+        $data['backup_user_count'] = 0;
+        $data['backup_users'] = [];
+        if ($data['users_xml'] && isset($data['users_xml']->user)) {
+            foreach ($data['users_xml']->user as $user) {
+                $data['backup_user_count']++;
+                $userid = (int)$user->id;
+                $data['backup_users'][$userid] = [
+                    'id' => $userid,
+                    'username' => (string)$user->username,
+                    'email' => (string)$user->email
+                ];
+            }
+        }
+        cli_writeln("[VALIDATION DEBUG] Total users in backup: " . $data['backup_user_count']);
+    } else {
+        cli_writeln("[VALIDATION DEBUG] users.xml NOT FOUND - backup may be structure-only");
+    }
+    
+    // Load roles.xml to get user role assignments in the course context
+    $roles_xml_path = $backuppath . '/roles.xml';
+    cli_writeln("[VALIDATION DEBUG] Checking roles.xml at: {$roles_xml_path}");
+    if (file_exists($roles_xml_path)) {
+        cli_writeln("[VALIDATION DEBUG] Found roles.xml");
+        $roles_xml = simplexml_load_file($roles_xml_path);
+        
+        // Parse role assignments to count users by role
+        // Structure: <roles><role_assignments><assignment><roleid>X</roleid><userid>Y</userid>...
+        $data['users_by_role'] = [];
+        $data['role_assignments'] = [];
+        
+        if ($roles_xml && isset($roles_xml->role_assignments->assignment)) {
+            // First pass: count users per roleid
+            $users_per_roleid = [];
+            foreach ($roles_xml->role_assignments->assignment as $assignment) {
+                $roleid = (string)$assignment->roleid;
+                $userid = (string)$assignment->userid;
+                
+                if (!isset($users_per_roleid[$roleid])) {
+                    $users_per_roleid[$roleid] = [];
+                }
+                $users_per_roleid[$roleid][$userid] = true; // Use userid as key to count unique
+            }
+            
+            // Map common roleids to shortnames (standard Moodle roles)
+            // Note: roleid can vary between installations, but typically:
+            // 1=manager, 3=editingteacher, 4=teacher, 5=student
+            $roleid_to_shortname = [
+                '1' => ['shortname' => 'manager', 'name' => 'Manager'],
+                '2' => ['shortname' => 'coursecreator', 'name' => 'Course creator'],
+                '3' => ['shortname' => 'editingteacher', 'name' => 'Teacher'],
+                '4' => ['shortname' => 'teacher', 'name' => 'Non-editing teacher'],
+                '5' => ['shortname' => 'student', 'name' => 'Student'],
+                '6' => ['shortname' => 'guest', 'name' => 'Guest'],
+                '7' => ['shortname' => 'user', 'name' => 'Authenticated user'],
+                '8' => ['shortname' => 'frontpage', 'name' => 'Frontpage user']
+            ];
+            
+            foreach ($users_per_roleid as $roleid => $users) {
+                $count = count($users);
+                $roleinfo = $roleid_to_shortname[$roleid] ?? ['shortname' => "role_{$roleid}", 'name' => "Role {$roleid}"];
+                
+                $data['users_by_role'][$roleinfo['shortname']] = [
+                    'name' => $roleinfo['name'],
+                    'shortname' => $roleinfo['shortname'],
+                    'roleid' => $roleid,
+                    'count' => $count
+                ];
+            }
+        }
+        cli_writeln("[VALIDATION DEBUG] Users by role from roles.xml: " . json_encode($data['users_by_role']));
+    } else {
+        cli_writeln("[VALIDATION DEBUG] roles.xml NOT FOUND");
+        
+        // Fallback: try to get role info from course/roles.xml
+        $course_roles_path = $backuppath . '/course/roles.xml';
+        if (file_exists($course_roles_path)) {
+            cli_writeln("[VALIDATION DEBUG] Found course/roles.xml");
+            $roles_xml = simplexml_load_file($course_roles_path);
+            $data['users_by_role'] = [];
+            
+            if ($roles_xml && isset($roles_xml->role_assignments->assignment)) {
+                $users_per_roleid = [];
+                foreach ($roles_xml->role_assignments->assignment as $assignment) {
+                    $roleid = (string)$assignment->roleid;
+                    $userid = (string)$assignment->userid;
+                    
+                    if (!isset($users_per_roleid[$roleid])) {
+                        $users_per_roleid[$roleid] = [];
+                    }
+                    $users_per_roleid[$roleid][$userid] = true;
+                }
+                
+                $roleid_to_shortname = [
+                    '1' => ['shortname' => 'manager', 'name' => 'Manager'],
+                    '3' => ['shortname' => 'editingteacher', 'name' => 'Teacher'],
+                    '4' => ['shortname' => 'teacher', 'name' => 'Non-editing teacher'],
+                    '5' => ['shortname' => 'student', 'name' => 'Student']
+                ];
+                
+                foreach ($users_per_roleid as $roleid => $users) {
+                    $count = count($users);
+                    $roleinfo = $roleid_to_shortname[$roleid] ?? ['shortname' => "role_{$roleid}", 'name' => "Role {$roleid}"];
+                    
+                    $data['users_by_role'][$roleinfo['shortname']] = [
+                        'name' => $roleinfo['name'],
+                        'shortname' => $roleinfo['shortname'],
+                        'roleid' => $roleid,
+                        'count' => $count
+                    ];
+                }
+            }
+            cli_writeln("[VALIDATION DEBUG] Users by role from course/roles.xml: " . json_encode($data['users_by_role']));
+        }
+    }
+    
+    // Load enrolments.xml - contains enrollment methods and user enrollments
+    // This is the MOST RELIABLE source for counting enrolled users
+    $enrolments_xml_path = $backuppath . '/enrolments.xml';
+    cli_writeln("[VALIDATION DEBUG] Checking enrolments.xml at: {$enrolments_xml_path}");
+    if (file_exists($enrolments_xml_path)) {
+        cli_writeln("[VALIDATION DEBUG] Found enrolments.xml");
+        $data['enrolments_xml'] = simplexml_load_file($enrolments_xml_path);
+        
+        // Parse enrolments to get user counts by role
+        $data['enrolments_by_role'] = [];
+        $data['total_enrolments'] = 0;
+        $data['enrolled_users'] = []; // Track unique users
+        
+        if ($data['enrolments_xml'] && isset($data['enrolments_xml']->enrols->enrol)) {
+            foreach ($data['enrolments_xml']->enrols->enrol as $enrol) {
+                $enrolmethod = (string)$enrol->enrol;
+                $roleid = (string)$enrol->roleid;
+                
+                if (isset($enrol->user_enrolments->enrolment)) {
+                    foreach ($enrol->user_enrolments->enrolment as $enrolment) {
+                        $userid = (string)$enrolment->userid;
+                        
+                        // Track unique enrolled users with their role
+                        if (!isset($data['enrolled_users'][$userid])) {
+                            $data['enrolled_users'][$userid] = [];
+                        }
+                        $data['enrolled_users'][$userid][$roleid] = true;
+                        $data['total_enrolments']++;
+                    }
+                }
+            }
+        }
+        
+        // Count unique users per role from enrolments
+        $users_per_roleid = [];
+        foreach ($data['enrolled_users'] as $userid => $roles) {
+            foreach ($roles as $roleid => $val) {
+                if (!isset($users_per_roleid[$roleid])) {
+                    $users_per_roleid[$roleid] = [];
+                }
+                $users_per_roleid[$roleid][$userid] = true;
+            }
+        }
+        
+        // Map roleids to shortnames
+        $roleid_to_shortname = [
+            '1' => ['shortname' => 'manager', 'name' => 'Manager'],
+            '2' => ['shortname' => 'coursecreator', 'name' => 'Course creator'],
+            '3' => ['shortname' => 'editingteacher', 'name' => 'Teacher'],
+            '4' => ['shortname' => 'teacher', 'name' => 'Non-editing teacher'],
+            '5' => ['shortname' => 'student', 'name' => 'Student'],
+            '6' => ['shortname' => 'guest', 'name' => 'Guest'],
+            '7' => ['shortname' => 'user', 'name' => 'Authenticated user'],
+            '8' => ['shortname' => 'frontpage', 'name' => 'Frontpage user']
+        ];
+        
+        foreach ($users_per_roleid as $roleid => $users) {
+            $count = count($users);
+            $roleinfo = $roleid_to_shortname[$roleid] ?? ['shortname' => "role_{$roleid}", 'name' => "Role {$roleid}"];
+            
+            $data['users_by_role'][$roleinfo['shortname']] = [
+                'name' => $roleinfo['name'],
+                'shortname' => $roleinfo['shortname'],
+                'roleid' => $roleid,
+                'count' => $count
+            ];
+        }
+        
+        $data['enrolled_user_count'] = count($data['enrolled_users']);
+        cli_writeln("[VALIDATION DEBUG] Total enrolments: " . $data['total_enrolments']);
+        cli_writeln("[VALIDATION DEBUG] Unique enrolled users: " . $data['enrolled_user_count']);
+        cli_writeln("[VALIDATION DEBUG] Users by role from enrolments.xml: " . json_encode($data['users_by_role']));
+        cli_writeln("[VALIDATION DEBUG] Total enrolments found: " . ($data['total_enrolments'] ?? 0));
+    } else {
+        cli_writeln("[VALIDATION DEBUG] enrolments.xml NOT FOUND");
     }
     
     return $data;
@@ -1121,6 +1412,7 @@ function validate_restore_completeness_with_data($origin_data, $courseid, $reque
     cli_writeln("[RESTORE CLI] Starting validation with pre-loaded origin data...");
     cli_writeln("[RESTORE CLI] Origin activities: " . json_encode($origin_data['activities']));
     cli_writeln("[RESTORE CLI] Origin sections: " . count($origin_data['sections']));
+    cli_writeln("[RESTORE CLI] Origin users by role: " . json_encode($origin_data['users_by_role'] ?? []));
     
     // 1. COURSE CONFIGURATION VALIDATION
     cli_writeln("[RESTORE CLI] Checking course configuration...");
@@ -1163,6 +1455,13 @@ function validate_restore_completeness_with_data($origin_data, $courseid, $reque
     $sections_check = validate_sections_simple($origin_data, $courseid);
     $checks[] = $sections_check;
     if (!$sections_check['passed']) $all_passed = false;
+    
+    // 8. ENROLLED USERS VALIDATION (students, teachers, other roles)
+    cli_writeln("[RESTORE CLI] Checking enrolled users by role...");
+    $users_check = validate_enrolled_users($origin_data, $courseid);
+    $checks[] = $users_check;
+    // Note: User mismatch is informational, doesn't fail validation
+    // if (!$users_check['passed']) $all_passed = false;
     
     // Log to coursetransfer_log
     log_validation_results($requestid, $checks, $all_passed);
@@ -1349,6 +1648,161 @@ function validate_sections_simple($origin_data, $courseid) {
 }
 
 /**
+ * Validate enrolled users by role (students, teachers, other roles).
+ * Compares origin backup users with destination course enrollments.
+ */
+function validate_enrolled_users($origin_data, $courseid) {
+    global $DB;
+    
+    // Get origin users by role from backup
+    $origin_by_role = $origin_data['users_by_role'] ?? [];
+    
+    // Get destination users by role
+    $context = \context_course::instance($courseid);
+    
+    // Query to get enrolled users grouped by role
+    $sql = "SELECT r.shortname, r.name, COUNT(DISTINCT ra.userid) as count
+            FROM {role_assignments} ra
+            JOIN {role} r ON r.id = ra.roleid
+            WHERE ra.contextid = :contextid
+            GROUP BY r.id, r.shortname, r.name
+            ORDER BY r.sortorder";
+    
+    $dest_by_role = $DB->get_records_sql($sql, ['contextid' => $context->id]);
+    
+    // Categorize roles into students, teachers, and others
+    $student_roles = ['student'];
+    $teacher_roles = ['editingteacher', 'teacher', 'manager'];
+    
+    // Calculate origin totals
+    $origin_students = 0;
+    $origin_teachers = 0;
+    $origin_others = 0;
+    $origin_details = [];
+    
+    foreach ($origin_by_role as $shortname => $roledata) {
+        $count = $roledata['count'];
+        $origin_details[] = "{$roledata['name']}: {$count}";
+        
+        if (in_array($shortname, $student_roles)) {
+            $origin_students += $count;
+        } elseif (in_array($shortname, $teacher_roles)) {
+            $origin_teachers += $count;
+        } else {
+            $origin_others += $count;
+        }
+    }
+    
+    // Calculate destination totals
+    $dest_students = 0;
+    $dest_teachers = 0;
+    $dest_others = 0;
+    $dest_details = [];
+    
+    foreach ($dest_by_role as $role) {
+        $count = (int)$role->count;
+        $dest_details[] = "{$role->name}: {$count}";
+        
+        if (in_array($role->shortname, $student_roles)) {
+            $dest_students += $count;
+        } elseif (in_array($role->shortname, $teacher_roles)) {
+            $dest_teachers += $count;
+        } else {
+            $dest_others += $count;
+        }
+    }
+    
+    $origin_total = $origin_students + $origin_teachers + $origin_others;
+    $dest_total = $dest_students + $dest_teachers + $dest_others;
+    
+    // Build detailed message
+    $origin_msg = "Students: {$origin_students}, Teachers: {$origin_teachers}, Others: {$origin_others}";
+    $dest_msg = "Students: {$dest_students}, Teachers: {$dest_teachers}, Others: {$dest_others}";
+    
+    // Check if counts match
+    $passed = ($origin_students == $dest_students && 
+               $origin_teachers == $dest_teachers && 
+               $origin_others == $dest_others);
+    
+    // If no origin users data (backup without users), consider it informational only
+    if (empty($origin_by_role)) {
+        // Check if backup has enrolled users from enrolments.xml
+        $enrolled_user_count = $origin_data['enrolled_user_count'] ?? 0;
+        if ($enrolled_user_count > 0) {
+            // We have enrolled users but couldn't parse roles - use total count
+            return [
+                'name' => 'Enrolled Users',
+                'passed' => ($enrolled_user_count == $dest_total),
+                'message' => "Origin: {$enrolled_user_count} enrolled, Dest: {$dest_total} enrolled",
+                'origin_summary' => "{$enrolled_user_count} enrolled users",
+                'dest_summary' => $dest_msg,
+                'details' => [
+                    'origin_students' => 0,
+                    'origin_teachers' => 0,
+                    'origin_others' => 0,
+                    'enrolled_user_count' => $enrolled_user_count,
+                    'dest_students' => $dest_students,
+                    'dest_teachers' => $dest_teachers,
+                    'dest_others' => $dest_others
+                ]
+            ];
+        }
+        
+        // No enrolled users in backup - structure-only backup
+        $backup_user_count = $origin_data['backup_user_count'] ?? 0;
+        return [
+            'name' => 'Enrolled Users',
+            'passed' => true,
+            'message' => "Dest: {$dest_msg} (no user data in backup)",
+            'origin_summary' => "No user data in backup",
+            'dest_summary' => $dest_msg,
+            'details' => [
+                'origin_students' => 0,
+                'origin_teachers' => 0,
+                'origin_others' => 0,
+                'dest_students' => $dest_students,
+                'dest_teachers' => $dest_teachers,
+                'dest_others' => $dest_others
+            ]
+        ];
+    }
+    
+    if ($passed) {
+        return [
+            'name' => 'Enrolled Users',
+            'passed' => true,
+            'message' => "{$dest_total} users enrolled ({$dest_msg})",
+            'origin_summary' => "{$origin_total} users ({$origin_msg})",
+            'dest_summary' => "{$dest_total} users ({$dest_msg})",
+            'details' => [
+                'origin_students' => $origin_students,
+                'origin_teachers' => $origin_teachers,
+                'origin_others' => $origin_others,
+                'dest_students' => $dest_students,
+                'dest_teachers' => $dest_teachers,
+                'dest_others' => $dest_others
+            ]
+        ];
+    }
+    
+    return [
+        'name' => 'Enrolled Users',
+        'passed' => false,
+        'message' => "Users differ - Origin: {$origin_msg} | Dest: {$dest_msg}",
+        'origin_summary' => "{$origin_total} users ({$origin_msg})",
+        'dest_summary' => "{$dest_total} users ({$dest_msg})",
+        'details' => [
+            'origin_students' => $origin_students,
+            'origin_teachers' => $origin_teachers,
+            'origin_others' => $origin_others,
+            'dest_students' => $dest_students,
+            'dest_teachers' => $dest_teachers,
+            'dest_others' => $dest_others
+        ]
+    ];
+}
+
+/**
  * Log validation results to coursetransfer log with HTML formatted table.
  */
 function log_validation_results($requestid, $checks, $all_passed) {
@@ -1376,9 +1830,18 @@ function log_validation_results($requestid, $checks, $all_passed) {
         $origin_info = '-';
         $dest_action = $check['message'];
         
-        if (!$check['passed']) {
+        // Use dest_summary if available, otherwise format from message
+        if (!empty($check['dest_summary'])) {
+            if ($check['passed']) {
+                $dest_action = '<span class="text-success">' . htmlspecialchars($check['dest_summary']) . '</span>';
+            } else {
+                $dest_action = htmlspecialchars($check['dest_summary']);
+            }
+        } elseif (!$check['passed']) {
             // Try to parse for more detail
             $dest_action = format_validation_action($check['name'], $check['message']);
+        } else {
+            $dest_action = '<span class="text-success">' . htmlspecialchars($check['message']) . '</span>';
         }
         
         $html .= "<tr class=\"{$rowclass}\">";
@@ -1441,6 +1904,14 @@ function log_validation_results($requestid, $checks, $all_passed) {
  * Get origin summary from check data.
  */
 function get_origin_summary($check) {
+    // If check has a dedicated origin_summary field, use it
+    if (!empty($check['origin_summary'])) {
+        if ($check['passed']) {
+            return '<span class="text-success">' . htmlspecialchars($check['origin_summary']) . '</span>';
+        }
+        return htmlspecialchars($check['origin_summary']);
+    }
+    
     if ($check['passed']) {
         return '<span class="text-success">' . htmlspecialchars($check['message']) . '</span>';
     }
