@@ -329,5 +329,23 @@ function xmldb_local_coursetransfer_upgrade($oldversion): bool {
         upgrade_plugin_savepoint(true, 2025010823, 'local', 'coursetransfer');
     }
 
+    // Remove unused local_coursetransfer_queue table.
+    // This table was created in version 2025010701 for a queue-based approach,
+    // but was never actually used. The sequential restore now uses STATUS_DOWNLOADED
+    // in the main request table instead.
+    if ($oldversion < 2025010824) {
+        
+        $table = new xmldb_table('local_coursetransfer_queue');
+        
+        // Conditionally drop the table if it exists.
+        if ($dbman->table_exists($table)) {
+            $dbman->drop_table($table);
+            mtrace("Dropped unused local_coursetransfer_queue table");
+        }
+        
+        // Coursetransfer savepoint reached.
+        upgrade_plugin_savepoint(true, 2025010824, 'local', 'coursetransfer');
+    }
+
     return true;
 }

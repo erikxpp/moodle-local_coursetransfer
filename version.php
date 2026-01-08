@@ -34,8 +34,8 @@
 defined('MOODLE_INTERNAL') || die();
 
 
-$plugin->version = 2025010823;  // v1.5.0 - Sequential restore queue: scheduled task processes one course at a time
+$plugin->version = 2025010824;  // v1.5.1 - Remove unused coursetransfer_queue table
 $plugin->requires = 2022112800;
 $plugin->component = 'local_coursetransfer';
-$plugin->release = '1.5.0';
+$plugin->release = '1.5.1';
 $plugin->maturity = MATURITY_STABLE;
