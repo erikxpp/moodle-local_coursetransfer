@@ -369,19 +369,28 @@ try {
         cli_writeln("[RESTORE CLI]   Context ID: " . $backupfile->get_contextid());
         
         try {
+            $deleted_filename = $backupfile->get_filename();
+            $deleted_filesize = $backupfile->get_filesize();
+            $deleted_file_id = $backupfile->get_id();
+            
             $backupfile->delete();
             cli_writeln("[RESTORE CLI] ✓ Backup file deleted successfully (destination)");
             
-            // Log the deletion
+            // Log the deletion with detailed info
             \local_coursetransfer\coursetransfer_logger::info(
                 $request->id,
                 \local_coursetransfer\coursetransfer_logger::DIRECTION_TARGET,
                 'TARGET_BACKUP_DELETED',
                 'Target backup file (.mbz) deleted after successful restore',
                 [
-                    'filename' => $backupfile->get_filename(),
-                    'file_id' => $backupfile->get_id(),
-                    'request_id' => $request->id
+                    'filename' => $deleted_filename,
+                    'file_id' => $deleted_file_id,
+                    'file_size' => $deleted_filesize,
+                    'file_size_mb' => round($deleted_filesize / 1048576, 2),
+                    'request_id' => $request->id,
+                    'origin_request_id' => isset($request->origin_request_id) ? $request->origin_request_id : null,
+                    'origin_course_id' => $request->origin_course_id,
+                    'target_course_id' => $request->target_course_id
                 ]
             );
         } catch (\Exception $deleteEx) {
